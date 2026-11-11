@@ -50,6 +50,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The Linux build links the Wayland client library through pkg-config (crate wayland-sys), so the development files must be
+      # installed on this ephemeral runner. It is the only missing library the failed run reported; if a later one is reported, add it here.
+      - name: Native build headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libwayland-dev
       - name: Unit tests
         working-directory: engine
         run: cargo test --locked

@@ -14,6 +14,7 @@ OpenRecorder is a small personal project that welcomes focused fixes. Please ope
 
 ```sh
 node tests/ui-cap-contracts.cjs
+# on Linux, first: sudo apt-get install pkg-config libwayland-dev   (Debian/Ubuntu names; the Wayland client library's pkg-config file)
 cd engine && cargo test --features desktop-ui
 python3 tests/package-manifests.py        # needs engine/runtime archives from scripts/build-native.py
 python3 scripts/check-site.py             # the static website

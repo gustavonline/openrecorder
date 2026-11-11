@@ -4,16 +4,36 @@
   "version": "0.6.0-preview.11",
   "build": 16,
   "tag": "v0.6.0-preview.11",
-  "status": "pending",
-  "verifiedAt": null,
-  "platforms": {},
-  "plannedAssets": [
-    "OpenRecorder-0.6.0-preview.11-mac-arm64.zip",
-    "openrecorder-plugin-0.6.0-preview.11-darwin-arm64.zip",
-    "openrecorder-media-sources-0.6.0-preview.11.tar.gz",
-    "openrecorder-0.6.0-preview.11-source.tar.gz",
-    "SHA256SUMS",
-    "manifest.json"
-  ],
-  "notice": "No release is published yet. The page offers a download only after scripts/update-site-release.py has verified the published files and rewritten this file; until then it points to the install steps."
+  "status": "published",
+  "verifiedAt": "2026-11-11T13:09:25Z",
+  "platforms": {
+    "macos": {
+      "architecture": "arm64",
+      "name": "OpenRecorder-0.6.0-preview.11-mac-arm64.zip",
+      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.11/OpenRecorder-0.6.0-preview.11-mac-arm64.zip",
+      "sha256": "e0d963ce3e004c6f26f01883468b315f16f7026f793f65672e6c5519fe7e207d",
+      "bytes": 8114863,
+      "status": "Preview, not notarized",
+      "minimumOS": "26.0"
+    },
+    "linux": {
+      "architecture": "x64",
+      "name": "OpenRecorder-0.6.0-preview.11-linux-x64.tar.gz",
+      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.11/OpenRecorder-0.6.0-preview.11-linux-x64.tar.gz",
+      "sha256": "a8822beacb0b9e05a5088944b3c642d1ff7d83a63852e196846e706d1973bf1c",
+      "bytes": 8660439,
+      "status": "Experimental build for Linux x64 (needs glibc 2.43 or newer, libdbus, libpipewire and libasound); compiled, never run on a real desktop by its author."
+    },
+    "windows": {
+      "architecture": "x64",
+      "name": "OpenRecorder-0.6.0-preview.11-windows-x64.zip",
+      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.11/OpenRecorder-0.6.0-preview.11-windows-x64.zip",
+      "sha256": "85f97909ddd0ef07a00c3e83cfcd245eab550ec223827c9a58791bc4feca761e",
+      "bytes": 7867215,
+      "status": "Experimental build for Windows x64 (cross-built, MinGW runtime included); never run on real Windows hardware."
+    }
+  },
+  "checksums": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.11/SHA256SUMS",
+  "sources": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.11/openrecorder-media-sources-0.6.0-preview.11.tar.gz",
+  "notice": "Verified against the release manifest by scripts/update-site-release.py. Builds for other platforms exist only where listed above."
 }
