@@ -1,0 +1,80 @@
+[package]
+name = "openrecorder-core"
+version = "0.6.0-preview.11"
+edition = "2021"
+license = "MIT"
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+panic = "abort"
+[features]
+native-capture = ["dep:scap"]
+desktop-ui = ["native-capture", "dep:eframe", "dep:winit", "dep:ureq", "dep:cpal"]
+[dependencies.scap]
+version = "=0.0.8"
+optional = true
+
+[patch.crates-io]
+libspa-sys = { path = "vendor/libspa-sys" }
+scap = { path = "vendor/scap" }
+[dependencies.eframe]
+version = "=0.33.3"
+optional = true
+default-features = false
+features = ["default_fonts", "glow", "wayland", "x11", "accesskit"]
+[dependencies.winit]
+version = "0.30"
+optional = true
+default-features = false
+[dependencies.ureq]
+version = "2.12.1"
+optional = true
+default-features = false
+features = ["json"]
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSView", "NSWindow", "NSResponder"] }
+block = "0.1"
+# One status icon on every platform that has a real one: the native NSStatusItem / notification icon through
+# tray-icon, and on Linux a StatusNotifierItem through ksni (no GTK, no GTK loop; D-Bus over the zbus stack already used
+# by the portal). ksni is Unlicense; the pin is exact.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies.tray-icon]
+version = "=0.21.3"
+default-features = false
+# The bus connection that watches the StatusNotifierWatcher and its hosts. Same zbus (and features) that ksni already
+# resolves; declared directly only so this crate can use it. No new package enters the tree.
+[target.'cfg(target_os = "linux")'.dependencies.zbus]
+version = "=5.19.0"
+default-features = false
+features = ["async-io", "blocking-api"]
+[target.'cfg(target_os = "linux")'.dependencies.ksni]
+version = "=0.3.7"
+default-features = false
+features = ["async-io", "blocking"]
+[dependencies.cpal]
+version = "=0.15.3"
+optional = true
+[dependencies.tiny_http]
+version = "0.12"
+[dependencies.uuid]
+version = "1"
+features = ["v4"]
+[dependencies.fs2]
+version = "0.4.3"
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+window-vibrancy = "=0.8.1"
+[dependencies.raw-window-handle]
+version = "0.6"
+
+[target.'cfg(target_os = "linux")'.dependencies.rfd]
+version = "=0.17.2"
+default-features = false
+features = ["xdg-portal", "wayland"]
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies.rfd]
+version = "=0.17.2"
+default-features = false

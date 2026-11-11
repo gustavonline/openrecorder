@@ -1,0 +1,12 @@
+{
+  "name": "openrecorder",
+  "displayName": "OpenRecorder",
+  "version": "0.6.0-preview.11",
+  "description": "A small native screen recorder with a local library, separate originals and temporary sharing. The plugin’s tools can organise and share recordings but cannot start one.",
+  "author": {
+    "name": "Gustav Online"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/gustavonline/openrecorder",
+  "homepage": "https://openrecorder.gustavonline.com/"
+}

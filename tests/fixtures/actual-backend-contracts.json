@@ -1,0 +1,611 @@
+{
+  "scope": "Actual Rust serializer via metadata-only disposable host; no GUI/devices/tunnel; fake fixture bytes are not playable media",
+  "coreSha256": "f665a7b014c8468103f942440a9de24d17f2349aee8758e9dd4fd5cb843d205d",
+  "cases": [
+    {
+      "name": "empty-defaults",
+      "kind": "full-state",
+      "payload": {
+        "active": null,
+        "folders": [],
+        "freeBytes": 16102371328,
+        "platform": "darwin",
+        "recordings": [],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "rounded",
+          "cameraSize": 168,
+          "countdownSeconds": 3,
+          "fps": 30,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 1920,
+          "rememberInputs": true,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "system"
+        },
+        "shares": [],
+        "totalBytes": 0,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "settings-write-result",
+      "kind": "settings-result",
+      "payload": {
+        "active": null,
+        "folders": [],
+        "freeBytes": 16102367232,
+        "platform": "darwin",
+        "recordings": [],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "wide",
+          "cameraSize": 224,
+          "countdownSeconds": 0,
+          "fps": 60,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 2560,
+          "rememberInputs": false,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "dark"
+        },
+        "shares": [],
+        "totalBytes": 0,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "settings-normalized",
+      "kind": "full-state",
+      "payload": {
+        "active": null,
+        "folders": [],
+        "freeBytes": 16102367232,
+        "platform": "darwin",
+        "recordings": [],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "wide",
+          "cameraSize": 224,
+          "countdownSeconds": 0,
+          "fps": 60,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 2560,
+          "rememberInputs": false,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "dark"
+        },
+        "shares": [],
+        "totalBytes": 0,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "ready-take",
+      "kind": "full-state",
+      "payload": {
+        "active": null,
+        "folders": [],
+        "freeBytes": 16102338560,
+        "platform": "darwin",
+        "recordings": [
+          {
+            "archived": false,
+            "bytes": 34,
+            "createdAt": 1794277858577,
+            "directory": "/tmp/recorder-real-contracts-_bf0_ns8/media/6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "duration": 1.0,
+            "favorite": false,
+            "files": [
+              {
+                "bytes": 34,
+                "name": "recording.mp4"
+              }
+            ],
+            "folder": null,
+            "id": "6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "root": "/tmp/recorder-real-contracts-_bf0_ns8/media",
+            "settings": {
+              "camera": false,
+              "keepOriginals": false
+            },
+            "status": "ready",
+            "title": "Metadata fixture ready"
+          }
+        ],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "wide",
+          "cameraSize": 224,
+          "countdownSeconds": 0,
+          "fps": 60,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 2560,
+          "rememberInputs": false,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "dark"
+        },
+        "shares": [],
+        "totalBytes": 34,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "filed-favorite-archive",
+      "kind": "full-state",
+      "payload": {
+        "active": null,
+        "folders": [
+          {
+            "id": "4d2b998b-eeb8-4be1-8dae-5b302a967060",
+            "name": "Metadata folder"
+          }
+        ],
+        "freeBytes": 16102334464,
+        "platform": "darwin",
+        "recordings": [
+          {
+            "archived": true,
+            "bytes": 34,
+            "createdAt": 1794277858577,
+            "directory": "/tmp/recorder-real-contracts-_bf0_ns8/media/6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "duration": 1.0,
+            "favorite": true,
+            "files": [
+              {
+                "bytes": 34,
+                "name": "recording.mp4"
+              }
+            ],
+            "folder": "4d2b998b-eeb8-4be1-8dae-5b302a967060",
+            "id": "6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "root": "/tmp/recorder-real-contracts-_bf0_ns8/media",
+            "settings": {
+              "camera": false,
+              "keepOriginals": false
+            },
+            "status": "ready",
+            "title": "Metadata fixture ready"
+          }
+        ],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "wide",
+          "cameraSize": 224,
+          "countdownSeconds": 0,
+          "fps": 60,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 2560,
+          "rememberInputs": false,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "dark"
+        },
+        "shares": [],
+        "totalBytes": 34,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "active-take",
+      "kind": "full-state",
+      "payload": {
+        "active": {
+          "engine": "native",
+          "id": "fe9d10d0-2dca-4a7d-a5cd-58bf69dd23a5",
+          "startedAt": 1794277858599,
+          "status": "recording"
+        },
+        "folders": [
+          {
+            "id": "4d2b998b-eeb8-4be1-8dae-5b302a967060",
+            "name": "Metadata folder"
+          }
+        ],
+        "freeBytes": 16102334464,
+        "platform": "darwin",
+        "recordings": [
+          {
+            "archived": false,
+            "bytes": 0,
+            "createdAt": 1794277858599,
+            "directory": "/tmp/recorder-real-contracts-_bf0_ns8/media/fe9d10d0-2dca-4a7d-a5cd-58bf69dd23a5",
+            "duration": 0,
+            "favorite": false,
+            "files": [],
+            "folder": null,
+            "id": "fe9d10d0-2dca-4a7d-a5cd-58bf69dd23a5",
+            "root": "/tmp/recorder-real-contracts-_bf0_ns8/media",
+            "settings": {
+              "camera": false,
+              "keepOriginals": false
+            },
+            "status": "recording",
+            "title": "Metadata fixture active"
+          },
+          {
+            "archived": true,
+            "bytes": 34,
+            "createdAt": 1794277858577,
+            "directory": "/tmp/recorder-real-contracts-_bf0_ns8/media/6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "duration": 1.0,
+            "favorite": true,
+            "files": [
+              {
+                "bytes": 34,
+                "name": "recording.mp4"
+              }
+            ],
+            "folder": "4d2b998b-eeb8-4be1-8dae-5b302a967060",
+            "id": "6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "root": "/tmp/recorder-real-contracts-_bf0_ns8/media",
+            "settings": {
+              "camera": false,
+              "keepOriginals": false
+            },
+            "status": "ready",
+            "title": "Metadata fixture ready"
+          }
+        ],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "wide",
+          "cameraSize": 224,
+          "countdownSeconds": 0,
+          "fps": 60,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 2560,
+          "rememberInputs": false,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "dark"
+        },
+        "shares": [],
+        "totalBytes": 34,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "interrupted-take",
+      "kind": "full-state",
+      "payload": {
+        "active": null,
+        "folders": [
+          {
+            "id": "4d2b998b-eeb8-4be1-8dae-5b302a967060",
+            "name": "Metadata folder"
+          }
+        ],
+        "freeBytes": 16102326272,
+        "platform": "darwin",
+        "recordings": [
+          {
+            "archived": false,
+            "bytes": 34,
+            "createdAt": 1794277858599,
+            "directory": "/tmp/recorder-real-contracts-_bf0_ns8/media/fe9d10d0-2dca-4a7d-a5cd-58bf69dd23a5",
+            "duration": 0,
+            "error": "controlled metadata fixture interruption",
+            "favorite": false,
+            "files": [
+              {
+                "bytes": 34,
+                "name": "recording.mp4"
+              }
+            ],
+            "folder": null,
+            "id": "fe9d10d0-2dca-4a7d-a5cd-58bf69dd23a5",
+            "root": "/tmp/recorder-real-contracts-_bf0_ns8/media",
+            "settings": {
+              "camera": false,
+              "keepOriginals": false
+            },
+            "status": "interrupted",
+            "title": "Metadata fixture active"
+          },
+          {
+            "archived": true,
+            "bytes": 34,
+            "createdAt": 1794277858577,
+            "directory": "/tmp/recorder-real-contracts-_bf0_ns8/media/6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "duration": 1.0,
+            "favorite": true,
+            "files": [
+              {
+                "bytes": 34,
+                "name": "recording.mp4"
+              }
+            ],
+            "folder": "4d2b998b-eeb8-4be1-8dae-5b302a967060",
+            "id": "6db1699b-a69a-4314-9127-95f2cafa49cb",
+            "root": "/tmp/recorder-real-contracts-_bf0_ns8/media",
+            "settings": {
+              "camera": false,
+              "keepOriginals": false
+            },
+            "status": "ready",
+            "title": "Metadata fixture ready"
+          }
+        ],
+        "root": "/tmp/recorder-real-contracts-_bf0_ns8/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "wide",
+          "cameraSize": 224,
+          "countdownSeconds": 0,
+          "fps": 60,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 2560,
+          "rememberInputs": false,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "dark"
+        },
+        "shares": [],
+        "totalBytes": 68,
+        "version": "0.6.0-preview.7"
+      }
+    },
+    {
+      "name": "capture-unreported",
+      "payload": {
+        "active": null,
+        "capture": {
+          "generation": 0,
+          "known": false,
+          "phase": "unavailable"
+        },
+        "folders": [],
+        "freeBytes": 13643206656,
+        "homeAgeMs": null,
+        "platform": "darwin",
+        "recordings": [],
+        "root": "/tmp/recorder-capture-fixture-5t5qo_8s/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "rounded",
+          "cameraSize": 168,
+          "countdownSeconds": 3,
+          "fps": 30,
+          "fpsChosen": false,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 1920,
+          "rememberInputs": true,
+          "showCamera": true,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "system"
+        },
+        "shares": [],
+        "totalBytes": 0,
+        "version": "0.6.0-preview.11"
+      }
+    },
+    {
+      "name": "capture-failed-take-reported",
+      "payload": {
+        "active": null,
+        "capture": {
+          "ageMs": 1,
+          "appearance": {
+            "mirror": true,
+            "shape": "rounded",
+            "showCamera": true,
+            "size": 168
+          },
+          "capabilities": {
+            "fps60": {
+              "basis": "The last 60 fps recording of this setup could not keep up",
+              "encoder": {
+                "measuredFps": 60.0,
+                "status": "qualified"
+              },
+              "measuredFps": null,
+              "status": "failed-last"
+            }
+          },
+          "devices": {
+            "camera": [
+              {
+                "name": "FaceTime HD Camera",
+                "selected": true,
+                "uid": "FIXTURE-CAM-A"
+              },
+              {
+                "name": "Studio Camera",
+                "selected": false,
+                "uid": "FIXTURE-CAM-B"
+              }
+            ],
+            "microphone": [
+              {
+                "name": "MacBook Pro Microphone",
+                "selected": true,
+                "uid": "MacBook Pro Microphone"
+              }
+            ]
+          },
+          "fpsSet": 60,
+          "generation": 6,
+          "inputs": {
+            "camera": {
+              "mark": "armed",
+              "name": "FaceTime HD Camera"
+            },
+            "microphone": {
+              "mark": "off"
+            }
+          },
+          "known": true,
+          "launch": "fixture-launch-0001",
+          "notice": {
+            "details": "Recording cannot keep up. Choose a lower resolution or frame rate.",
+            "generation": 6,
+            "kept": true,
+            "kind": "failed",
+            "text": "Couldn\u2019t keep up at 60 fps, 2560 \u00d7 1440. Originals are kept."
+          },
+          "phase": "idle",
+          "screenAllowed": true,
+          "screenState": "allowed",
+          "source": {
+            "kind": "display",
+            "name": "Built-in Display"
+          },
+          "sources": [
+            {
+              "id": 1,
+              "kind": "display",
+              "name": "Built-in Display",
+              "selected": true
+            },
+            {
+              "id": 2,
+              "kind": "display",
+              "name": "LG UltraFine",
+              "selected": false
+            }
+          ],
+          "stale": false,
+          "trayAvailable": true
+        },
+        "folders": [],
+        "freeBytes": 13643206656,
+        "homeAgeMs": null,
+        "platform": "darwin",
+        "recordings": [],
+        "root": "/tmp/recorder-capture-fixture-5t5qo_8s/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "rounded",
+          "cameraSize": 168,
+          "countdownSeconds": 3,
+          "fps": 30,
+          "fpsChosen": false,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 1920,
+          "rememberInputs": true,
+          "showCamera": true,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "system"
+        },
+        "shares": [],
+        "totalBytes": 0,
+        "version": "0.6.0-preview.11"
+      }
+    },
+    {
+      "name": "capture-recording-reported",
+      "payload": {
+        "active": null,
+        "capture": {
+          "ageMs": 1,
+          "appearance": {
+            "mirror": false,
+            "shape": "wide",
+            "showCamera": false,
+            "size": 224
+          },
+          "elapsedMs": 46000,
+          "fpsDelivered": 59.8,
+          "fpsSet": 60,
+          "generation": 7,
+          "inputs": {
+            "camera": {
+              "mark": "live",
+              "name": "FaceTime HD Camera"
+            },
+            "microphone": {
+              "mark": "live"
+            }
+          },
+          "known": true,
+          "launch": "fixture-launch-0001",
+          "phase": "recording",
+          "source": {
+            "kind": "display",
+            "name": "Built-in Display"
+          },
+          "sourceFps": 30.0,
+          "stale": false
+        },
+        "folders": [],
+        "freeBytes": 13643206656,
+        "homeAgeMs": null,
+        "platform": "darwin",
+        "recordings": [],
+        "root": "/tmp/recorder-capture-fixture-5t5qo_8s/user/Movies/OpenRecorder",
+        "settings": {
+          "camera": false,
+          "cameraDeviceId": null,
+          "cameraShape": "rounded",
+          "cameraSize": 168,
+          "countdownSeconds": 3,
+          "fps": 30,
+          "fpsChosen": false,
+          "keepOriginals": true,
+          "microphone": false,
+          "microphoneDeviceId": null,
+          "mirror": true,
+          "quality": 1920,
+          "rememberInputs": true,
+          "showCamera": true,
+          "source": "display",
+          "systemAudio": false,
+          "theme": "system"
+        },
+        "shares": [],
+        "totalBytes": 0,
+        "version": "0.6.0-preview.11"
+      }
+    }
+  ],
+  "captureCasesCoreSha256": "73db0c58d70a00a7d07798e52c17f31ecce363d5a522e25ca04844b385117b57"
+}

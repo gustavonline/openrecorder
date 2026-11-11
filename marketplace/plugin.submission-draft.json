@@ -1,0 +1,92 @@
+{
+  "_readme": "A DRAFT of the fields to merge into a SEPARATE COPY of plugin.json for a marketplace submission. Nothing here is verified, submitted or approved. The public URLs below are prepared but have not been fetched or verified: the site is not deployed yet. Unknown decisions are omitted on purpose (see marketplace/README.md).",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "OpenRecorder",
+        "shortDescription": "Record. Save. Share.",
+        "longDescription": "OpenRecorder is a small native screen recorder for your computer, controlled from the menu bar or tray and from its local Home page. Put your camera on screen, keep the screen and camera as separate files on your own computer, and share one recording with a temporary link and a separate access code. This plugin lets your agent find recordings, open Home, organise your library, share or unshare a recording and stop a take when you ask. You start a recording yourself: none of the plugin’s tools starts one, switches the camera or microphone on, chooses what to record or changes permissions. No account, no analytics; recordings stay in your own folders unless you create a share link, and your agent host receives what the tools return. Preview: macOS 26.0 or later on Apple silicon; experimental Linux and Windows builds exist and have not been run on hardware.",
+        "developerName": "Gustav Online",
+        "category": "Productivity",
+        "defaultPrompt": [
+          "Find my latest recording and tell me when it was made.",
+          "Open my OpenRecorder library.",
+          "Share my latest recording for one hour."
+        ],
+        "websiteURL": "https://openrecorder.gustavonline.com/",
+        "supportURL": "https://openrecorder.gustavonline.com/support.html",
+        "privacyPolicyURL": "https://openrecorder.gustavonline.com/privacy.html",
+        "logo": "./assets/icon-256.png",
+        "composerIcon": "./assets/icon-48.png",
+        "logoDark": "./assets/icon-dark-256.png",
+        "composerIconDark": "./assets/icon-dark-48.png"
+      },
+      "review": {
+        "prompts": [
+          "Find the recording I made this morning.",
+          "Open OpenRecorder.",
+          "Share my latest recording for an hour and give me the link and the code."
+        ],
+        "test_cases": {
+          "positive": [
+            {
+              "description": "List recordings. The reviewer's library holds at least two recordings made earlier (set up by the reviewer in advance; see marketplace/README.md).",
+              "prompt": "Which recordings do I have in OpenRecorder, newest first?",
+              "tools_triggered": "openrecorder_action",
+              "expected_behavior": "The agent calls openrecorder_action with op `state` (no data) and answers from the returned `recordings` array: titles, dates and statuses of the actual entries, newest first. It does not invent recordings, does not call any other operation and does not start a recording."
+            },
+            {
+              "description": "Open Home in the host's app window, or the browser fallback. The library host may start as a side effect; no device is opened.",
+              "prompt": "Open my OpenRecorder library.",
+              "tools_triggered": "openrecorder_home",
+              "expected_behavior": "The agent calls openrecorder_home. The response carries the library state and the local origin but no access link or key; in a host that renders MCP Apps the OpenRecorder Home window appears. If the host cannot show it, the agent offers openrecorder_action op `open-library` and, if the user agrees, calls it: the response is `opened: true` and no URL or key is repeated to the user."
+            },
+            {
+              "description": "Organise: mark one named recording as a favorite.",
+              "prompt": "Add the recording called \"Weekly demo\" to my favorites.",
+              "tools_triggered": "openrecorder_action",
+              "expected_behavior": "The agent first reads state to find the recording's `id` by its title, then calls openrecorder_action with op `update`, data {id: <that id>, patch: {favorite: true}}. The result shows favorite true for that id. It does not move, rename, archive or delete anything."
+            },
+            {
+              "description": "Share one recording for a chosen time. Sharing needs the optional cloudflared tool; the reviewer's environment either has it or the expected result is the clear failure below.",
+              "prompt": "Share my latest recording for one hour and give me the link and the access code.",
+              "tools_triggered": "openrecorder_action",
+              "expected_behavior": "The agent finds the latest recording's id from state, calls openrecorder_action op `share` with data {id, minutes: 60}, then reads state until the share entry is `ready` (or `failed`). When ready it gives the user the `url` and the `accessCode` together and says the code is required to watch and that the link ends at `expiresAt`. When failed (for example cloudflared is not installed) it reports the returned error and says nothing was shared. It never invents a link."
+            },
+            {
+              "description": "Stop a take only because the user asks. Needs a take the reviewer has started by hand in the app before the prompt.",
+              "prompt": "Stop the recording that is running now.",
+              "tools_triggered": "openrecorder_action",
+              "expected_behavior": "The agent calls openrecorder_action with op `stop`. The take is finalised and saved; the agent reports that it stopped and does not claim to have started or changed anything else. If no take is running it says so after reading state, without error."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Starting a recording is outside the plugin: the person starts one in the app. None of the plugin’s tools does.",
+              "prompt": "Start recording my screen now."
+            },
+            {
+              "description": "Turning the camera or microphone on, or choosing what to record, is outside the plugin; the agent must explain this and point to the menu-bar icon or Home, and must not call any tool that opens a device.",
+              "prompt": "Turn on my camera and microphone and record my second display."
+            },
+            {
+              "description": "Editing, trimming or transcribing video is outside the plugin (it supplies recordings and file locations). The agent may locate the file but must say it cannot edit or transcribe it.",
+              "prompt": "Trim the first ten seconds off my latest recording and write a transcript."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "release_notes": "First public preview (0.6.0-preview.11). Requires macOS 26.0 or later on Apple silicon; not notarized. A menu-bar recorder with a camera bubble, a local library, an agent plugin whose tools cannot start recordings, and temporary protected sharing. Experimental Linux and Windows builds exist and have not been run on hardware."
+      }
+    }
+  },
+  "_gaps": [
+    "termsOfServiceURL: no terms page exists; the owner must decide what terms apply (the code is MIT licensed). Not drafted.",
+    "publication.countries and translations: the owner has not chosen supported countries. Omitted so nothing is restricted or invented.",
+    "review.demo_recording_url: no demo recording exists; it needs a real recording of the plugin in a host. Omitted.",
+    "review.commerce: OpenRecorder has no payments or purchases; the owner must confirm the declaration in the portal.",
+    "Publisher identity: the verified individual or business identity is unknown to this repository.",
+    "Tool annotations: openrecorder_home declares only readOnlyHint; the submission checks require boolean readOnlyHint, openWorldHint and destructiveHint on every tool. Fixing that is a three-line change in engine/src/library_host.rs and was NOT made (the engine is frozen at the accepted build)."
+  ]
+}

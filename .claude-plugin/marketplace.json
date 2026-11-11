@@ -1,0 +1,16 @@
+{
+  "name": "openrecorder",
+  "owner": {
+    "name": "Gustav Online"
+  },
+  "plugins": [
+    {
+      "name": "openrecorder",
+      "source": "./",
+      "description": "A small native screen recorder with a local library and temporary sharing; the plugin’s tools cannot start recordings."
+    }
+  ],
+  "metadata": {
+    "description": "OpenRecorder: a small native recorder; the primary build needs macOS 26.0 or later on Apple silicon."
+  }
+}

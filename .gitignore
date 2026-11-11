@@ -1,0 +1,16 @@
+# build output and local state
+/engine/target/
+/engine/runtime/
+/dist/
+*.zip
+*.log
+.DS_Store
+# never commit credentials, keys or recordings
+*.pem
+*.key
+*.p12
+.env
+.env.*
+__pycache__/
+*.pyc
+node_modules/

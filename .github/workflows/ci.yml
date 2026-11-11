@@ -1,0 +1,55 @@
+name: CI
+
+# Source, package and site checks only. Nothing here records, publishes or deploys. Checks that need a real desktop (capture,
+# permissions, tray, a real tunnel, Codex or Claude Code loading the plugin) are manual and are described in docs/release.md.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Home page, site and tooling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Home page contracts
+        run: node tests/ui-cap-contracts.cjs
+      - name: Product page download logic
+        run: node --test tests/site-downloads.mjs
+      - name: Published-release identity guard
+        run: python3 tests/release-guard.py
+      - name: Product page structure, assets, policy and release guard
+        run: python3 scripts/check-site.py
+      - name: Release tooling parses
+        run: python3 -m py_compile scripts/*.py tests/*.py
+
+  engine:
+    name: Rust tests (no desktop features)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        working-directory: engine
+        run: cargo test --locked

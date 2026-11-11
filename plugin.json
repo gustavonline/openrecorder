@@ -1,0 +1,38 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openrecorder",
+  "version": "0.6.0-preview.11",
+  "description": "A small native screen recorder with a local library, separate originals and temporary sharing. The plugin’s tools can organise and share recordings but cannot start one.",
+  "author": {
+    "name": "Gustav Online",
+    "url": "https://github.com/gustavonline"
+  },
+  "license": "MIT",
+  "keywords": [
+    "recording",
+    "screen",
+    "local",
+    "browser",
+    "cross-platform"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "OpenRecorder",
+        "shortDescription": "Record. Save. Share.",
+        "longDescription": "A compact native recorder controlled from the menu bar or tray and from its local Home page, with a movable camera bubble and an on-demand local library. Your agent can find, organise, open and share recordings and can stop a take when you ask; only you can start one. Preview: macOS 26.0 or later on Apple silicon; experimental Linux and Windows builds exist and have not been run on hardware. No Node.js or browser engine is bundled.",
+        "developerName": "Gustav Online",
+        "category": "Productivity",
+        "capabilities": [
+          "Interactive"
+        ],
+        "composerIcon": "./assets/icon.svg",
+        "composerIconDark": "./assets/icon-dark.svg",
+        "logo": "./assets/icon.svg",
+        "logoDark": "./assets/icon-dark.svg"
+      }
+    }
+  },
+  "repository": "https://github.com/gustavonline/openrecorder",
+  "homepage": "https://openrecorder.gustavonline.com/"
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "openrecorder": {
+      "type": "stdio",
+      "command": "./.runtime/OpenRecorder.app/Contents/MacOS/OpenRecorder",
+      "args": [
+        "--stdio"
+      ]
+    }
+  }
+}

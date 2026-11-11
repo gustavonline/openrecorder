@@ -1,0 +1,92 @@
+{
+  "repository": "gustavonline/openrecorder",
+  "source": "Pinned local captures, the project's own mark and credited assets; verified by SHA256 (scripts/check-site.py).",
+  "assets": [
+    {
+      "path": "site/assets/logo.svg",
+      "sha256": "f2f9c40eca5141a8aef6612eaa6e1a7e89ab4092d221b7fe95165ad30f4c3ecb",
+      "source": "The OpenRecorder black disc: same file as assets/icon.svg in the repository."
+    },
+    {
+      "path": "site/assets/logo-dark.svg",
+      "sha256": "d1e4549fc5b58ddcd22cfe24d57c216a7bf91fd71664d66d71ddd53edca38750",
+      "source": "The OpenRecorder black disc with a hairline ring for dark surfaces: same file as assets/icon-dark.svg."
+    },
+    {
+      "path": "site/assets/codex.svg",
+      "sha256": "4a2f43ce46b5b6e3722c95088f88d26ef91e6a8c2e598e70642a1c54367386e4",
+      "source": "Lobe Icons static SVG collection, MIT; brand marks remain with their respective owners; used for compatibility, not endorsement.",
+      "sourceUrl": "https://github.com/lobehub/lobe-icons/blob/8b7bbc433d38437fa2b0cca58ae896917162b812/packages/static-svg/icons/codex-color.svg",
+      "sourceSha256": "4a2f43ce46b5b6e3722c95088f88d26ef91e6a8c2e598e70642a1c54367386e4"
+    },
+    {
+      "path": "site/assets/claude-code.svg",
+      "sha256": "670b3d8d749d0815ad8f7e62a59d51cb5e2053cb19403f3541a8aed7036a877f",
+      "source": "Lobe Icons static SVG collection, MIT; brand marks remain with their respective owners; used for compatibility, not endorsement.",
+      "sourceUrl": "https://github.com/lobehub/lobe-icons/blob/8b7bbc433d38437fa2b0cca58ae896917162b812/packages/static-svg/icons/claudecode-color.svg",
+      "sourceSha256": "670b3d8d749d0815ad8f7e62a59d51cb5e2053cb19403f3541a8aed7036a877f"
+    },
+    {
+      "path": "site/assets/arcitai.svg",
+      "sha256": "e2e7db4b96105e5b2f7a87d4295adbe788a9af6577faa03aac980c239306cd93",
+      "source": "Canonical owner mark from arcitai-website/public/assets/arcitai-mark-final.svg",
+      "sourceSha256": "e2e7db4b96105e5b2f7a87d4295adbe788a9af6577faa03aac980c239306cd93"
+    },
+    {
+      "path": "site/assets/onlinesourdough.svg",
+      "sha256": "9d6fc30b46611e4eb91bcdb1573f8192ee5652ec860979cf4ead605d28532f34",
+      "source": "Approved owner large-pixel bread mark, reused unchanged from gustavonline/public/assets/brand-marks/onlinesourdough.svg (production snapshot 2026-10-25). Rendered as a theme-aware mask; geometry unchanged.",
+      "sourceSha256": "9d6fc30b46611e4eb91bcdb1573f8192ee5652ec860979cf4ead605d28532f34"
+    },
+    {
+      "path": "site/assets/gustavonline.jpg",
+      "sha256": "85f1ef31fd1243277ffee1e4ad78db187be1275d242f399b4dfad20bd7f847dd",
+      "source": "Approved owner portrait used by FamilyMark in the onlinesourdough family footer, production snapshot 2026-10-25. Reused unchanged from onlinesourdough/public/assets/gustav-linkedin-portrait.jpg.",
+      "sourceSha256": "85f1ef31fd1243277ffee1e4ad78db187be1275d242f399b4dfad20bd7f847dd"
+    },
+    {
+      "path": "site/assets/fonts/inter-latin-variable.woff2",
+      "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+      "source": "Inter variable font, Latin subset, @fontsource-variable/inter 5.3.0 (SIL OFL 1.1), copied unchanged from the author's OpenPaperDesign site."
+    },
+    {
+      "path": "site/assets/fonts/Inter-LICENSE.txt",
+      "sha256": "3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345",
+      "source": "Inter licence, unchanged."
+    },
+    {
+      "path": "site/assets/fonts/Inter-SOURCE.txt",
+      "sha256": "ab61a6032bd5df3b88f3b86c65b5f503aaf8746bc79060d45867f66f1da681ec",
+      "source": "Inter source note, unchanged."
+    },
+    {
+      "path": "site/assets/licenses/Lobe-Icons-LICENSE",
+      "sha256": "add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a",
+      "source": "Lobe Icons MIT licence, unchanged."
+    },
+    {
+      "path": "site/assets/guest-unlock.png",
+      "sha256": "92e69de45cb9c44ca8f5a87256ff68389a5a35a15380021263dd1629501a411f",
+      "source": "Actual screenshot: the guest unlock page.",
+      "capture": {
+        "renderer": "Firefox 159 (headed, Playwright CLI), disposable profile, self-signed TLS accepted for 127.0.0.1 in that profile only",
+        "server": "the real Rust GuestServer/Access/serve_request in a test-only fixture (tests/share-browser-fixture.py), TLS front that rewrites nothing",
+        "media": "a 4 second generated gradient video encoded with ffmpeg from synthetic frames; no capture, no person, no real recording",
+        "credentials": "fixed synthetic link token and access code, public by design",
+        "limits": "Shows the guest pages only. Not the macOS app, the menu, Home or a real tunnel. 1280x955 viewport capture."
+      }
+    },
+    {
+      "path": "site/assets/guest-player.png",
+      "sha256": "5c7f9e1fb5dca2a134e763435f7793690594a5b7d2c82f529434ebade39acebf",
+      "source": "Actual screenshot: the guest player with a synthetic test video.",
+      "capture": {
+        "renderer": "Firefox 159 (headed, Playwright CLI), disposable profile, self-signed TLS accepted for 127.0.0.1 in that profile only",
+        "server": "the real Rust GuestServer/Access/serve_request in a test-only fixture (tests/share-browser-fixture.py), TLS front that rewrites nothing",
+        "media": "a 4 second generated gradient video encoded with ffmpeg from synthetic frames; no capture, no person, no real recording",
+        "credentials": "fixed synthetic link token and access code, public by design",
+        "limits": "Shows the guest pages only. Not the macOS app, the menu, Home or a real tunnel. 1280x955 viewport capture."
+      }
+    }
+  ]
+}

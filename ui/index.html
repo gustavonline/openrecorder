@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenRecorder</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5.5'/%3E%3C/svg%3E"><style>/* STYLES */</style></head>
+<body>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar" aria-label="Library">
+    <div class="side-brand"><span class="brand-dot" aria-hidden="true"></span><strong>OpenRecorder</strong><button class="icon-button sheet-close" id="sheetClose" aria-label="Close navigation"><span data-icon="close" aria-hidden="true"></span></button></div>
+    <nav class="side-nav" id="mainNav" aria-label="Recordings">
+      <button class="nav-item" data-view="all" aria-current="page"><span data-icon="all" aria-hidden="true"></span><span class="nav-label">All recordings</span><span class="count" id="allCount"></span></button>
+      <button class="nav-item" data-view="favorites"><span data-icon="star" aria-hidden="true"></span><span class="nav-label">Favorites</span><span class="count" id="favoriteCount"></span></button>
+      <button class="nav-item" data-view="shared"><span data-icon="link" aria-hidden="true"></span><span class="nav-label">Shared</span><span class="count" id="sharedCount"></span></button>
+    </nav>
+    <section class="side-folders" aria-labelledby="foldersLabel">
+      <div class="side-label"><span id="foldersLabel">Folders</span><button class="icon-button" id="newFolder" aria-label="Add folder" title="Add folder"><span data-icon="plus" aria-hidden="true"></span></button></div>
+      <div id="folders" class="folder-list"></div>
+    </section>
+    <div class="side-foot">
+      <button class="nav-item" data-view="archived"><span data-icon="archive" aria-hidden="true"></span><span class="nav-label">Archived</span></button>
+      <button class="nav-item" id="settingsButton"><span data-icon="cog" aria-hidden="true"></span><span class="nav-label">Settings</span></button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+  <main class="content" id="content">
+    <header class="topbar" id="topbar">
+      <button class="icon-button menu-button" id="menuButton" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu" aria-hidden="true"></span></button>
+      <h1 id="pageTitle">All recordings</h1>
+      <div class="tools" id="tools">
+        <label class="search"><span data-icon="search" aria-hidden="true"></span><input id="search" type="search" placeholder="Search" aria-label="Search recordings" autocomplete="off"></label>
+        <select id="sort" aria-label="Sort recordings"><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="longest">Longest</option></select>
+      </div>
+      <button class="icon-button search-toggle" id="searchToggle" aria-label="Search recordings" aria-expanded="false"><span data-icon="search" aria-hidden="true"></span></button>
+      <div class="cap" id="capture" role="group" aria-label="Capture controls" hidden>
+        <button class="cap-chip cap-src" id="capSource" aria-haspopup="dialog" aria-expanded="false" aria-label="Source"><span data-icon="display" aria-hidden="true"></span><span class="cap-name" id="capSourceName">Display</span><span class="cap-caret" aria-hidden="true">⌄</span></button>
+        <button class="cap-chip cap-dev" id="capCamera" aria-haspopup="dialog" aria-expanded="false" aria-label="Camera"><span data-icon="camera" aria-hidden="true"></span><span class="cap-name" id="capCameraName">Camera</span><i class="cap-mark" aria-hidden="true"></i></button>
+        <button class="cap-chip cap-dev" id="capMic" aria-haspopup="dialog" aria-expanded="false" aria-label="Microphone"><span data-icon="mic" aria-hidden="true"></span><span class="cap-name" id="capMicName">Microphone</span><i class="cap-mark" aria-hidden="true"></i></button>
+        <span class="cap-divider" aria-hidden="true"></span>
+        <button class="cap-record" id="capRecord" data-phase="idle"><span class="cap-glyph" aria-hidden="true"></span><span id="capRecordLabel">Record</span></button>
+        <span class="cap-time" id="capTime" hidden></span>
+      </div>
+      <div class="host-menu" id="hostMenuBox" hidden><button class="icon-button" id="hostMenuButton" aria-label="More" aria-haspopup="menu" aria-expanded="false" title="More"><span data-icon="more" aria-hidden="true"></span></button></div>
+      <div class="rec-status" id="activeStatus" hidden><span class="rec-dot" aria-hidden="true"></span><span id="activeLabel"></span><button class="stop" id="stopRecording" hidden>Stop</button></div>
+    </header>
+    <section class="reach" id="reach" hidden aria-labelledby="reachTitle">
+      <div class="reach-text"><strong id="reachTitle">OpenRecorder isn’t reachable</strong><p id="reachText"></p></div>
+      <div class="reach-actions"><button id="reachRetry">Try again</button><details class="reach-details" id="reachDetails"><summary>Details</summary><div class="popover"><pre id="reachRaw"></pre><button id="copyDetails">Copy details</button></div></details></div>
+    </section>
+    <p class="cap-line" id="capLine" hidden></p>
+    <p class="cap-line" id="mediaLine" hidden role="status"></p>
+    <section class="cap-notice" id="capNotice" hidden role="status" aria-labelledby="capNoticeText">
+      <div class="cap-notice-text"><strong id="capNoticeText">Recording stopped early</strong><p id="capNoticeSub">Available files were kept.</p></div>
+      <div class="cap-notice-actions"><button class="primary" id="capOpenTake">Open recording</button></div>
+    </section>
+    <div class="body" id="body">
+      <section id="libraryView" aria-label="Recordings">
+        <div id="recordings" class="recordings"></div>
+        <div class="empty" id="empty" hidden><span class="empty-mark" data-icon="play" aria-hidden="true"></span><h2 id="emptyTitle"></h2><p id="emptyText"></p></div>
+      </section>
+      <section id="recordingView" hidden aria-labelledby="detailTitle">
+        <div class="rec-head">
+          <button class="back" id="backButton"><span data-icon="back" aria-hidden="true"></span><span id="backLabel">All recordings</span></button>
+          <div class="rec-title"><button class="title-button" id="detailTitle" title="Rename">Recording</button><p id="detailMeta"></p></div>
+          <div class="rec-actions"><button class="icon-button" id="favoriteButton" aria-pressed="false" aria-label="Add to Favorites" title="Add to Favorites"><span data-icon="star" aria-hidden="true"></span></button><button class="primary" id="shareButton"><span data-icon="share" aria-hidden="true"></span><span>Share</span></button><button class="icon-button" id="detailMore" aria-label="More actions" aria-haspopup="menu" aria-expanded="false"><span data-icon="more" aria-hidden="true"></span></button></div>
+        </div>
+        <div class="stop-note" id="stopNote" hidden><i aria-hidden="true">!</i><div><strong id="stopNoteTitle"></strong><p id="stopNoteText"></p></div></div>
+        <details class="tech" id="techBox" hidden><summary>Technical details</summary><div id="techBody"></div><p><button id="techCopy">Copy details</button></p><div class="tech-next"><span id="techNextLabel">Next recordings</span><div class="seg" role="radiogroup" aria-labelledby="techNextLabel" id="techFps"></div><small>Frame rate for new recordings. Doesn’t change this one.</small></div></details>
+        <p class="player-note" id="playerNote" hidden></p>
+        <div class="player" id="playerBox"><div class="player-tabs" id="playerTabs" role="tablist" aria-label="Recording file" hidden></div><video id="player" controls playsinline preload="metadata" aria-label="Recording player"></video><label class="speed">Speed <select id="speed" aria-label="Playback speed"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label></div>
+        <div class="panels">
+          <section class="panel" aria-labelledby="detailsHeading"><h2 id="detailsHeading">Details</h2><dl id="detailRows"></dl><p class="note" id="moveNote"></p></section>
+          <section class="panel" aria-labelledby="filesHeading"><h2 id="filesHeading">Files</h2><div id="detailFiles"></div><p class="note" id="originalNote"></p><p class="path" id="detailPath"></p><button id="revealButton">Show in Finder</button></section>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<section class="locked" id="locked" hidden aria-labelledby="lockedTitle"><span class="brand-dot" aria-hidden="true"></span><h1 id="lockedTitle">Open the Library from OpenRecorder</h1><p id="lockedText"></p></section>
+<div id="menu" class="menu" role="menu" hidden></div>
+<div id="capMenu" class="menu cap-menu" role="menu" hidden></div>
+<div id="hostMenu" class="menu" role="menu" hidden></div>
+<div id="capPop" class="cap-pop" role="dialog" aria-label="Capture options" hidden></div>
+<dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+  <div class="settings-shell">
+    <nav class="settings-nav" id="settingsNav" role="tablist" aria-label="Settings sections" aria-orientation="vertical"></nav>
+    <div class="settings-main"><header><h2 id="settingsTitle">General</h2><button class="icon-button close-dialog" aria-label="Close settings"><span data-icon="close" aria-hidden="true"></span></button></header><div id="settingsPane" role="tabpanel" aria-labelledby="settingsTitle"></div><p id="settingsStatus" role="status" aria-live="polite"></p><footer><span>Changes apply as you make them.</span></footer></div>
+  </div>
+</dialog>
+<dialog id="shareDialog" class="share-dialog" aria-labelledby="shareTitle" aria-describedby="shareTarget">
+  <div class="dialog-heading"><div><h2 id="shareTitle">Share recording</h2><p id="shareTarget"></p></div><button class="icon-button close-dialog" aria-label="Close"><span data-icon="close" aria-hidden="true"></span></button></div>
+  <div id="shareNew"><p>Guests need both the link and the access code. Only the combined video is shared, never the original files.</p><fieldset class="segment-set" id="shareDuration"><legend>Link lasts</legend><div class="segment"><label><input type="radio" name="shareMinutes" value="15"><span>15 min</span></label><label><input type="radio" name="shareMinutes" value="60" checked><span>1 hour</span></label><label><input type="radio" name="shareMinutes" value="480"><span>8 hours</span></label><label><input type="radio" name="shareMinutes" value="0"><span>Never</span></label></div><small class="note" id="shareNeverNote">Never means no deadline while OpenRecorder stays open and this computer stays online. It ends when you revoke it, archive the recording or quit.</small></fieldset><button class="primary full-width" id="createShare">Create link</button></div>
+  <div id="shareStarting" hidden><p id="shareStartingText" role="status">Starting…</p><p class="note">The link and code appear here once the connection answers.</p><button id="cancelShare">Cancel</button></div>
+  <div id="shareReady" hidden>
+    <p class="note" id="shareExpiry"></p>
+    <div class="credential"><label for="shareUrl">Link</label><div class="credential-row"><input id="shareUrl" readonly spellcheck="false"><button id="copyShare">Copy link</button></div></div>
+    <div class="credential"><span class="credential-label" id="shareCodeLabel">Access code</span><div class="credential-row"><output id="shareCode" class="code" aria-labelledby="shareCodeLabel"></output><button id="copyCode">Copy code</button></div></div>
+    <div class="credential-row"><button id="copyInvite">Copy invitation</button></div>
+    <textarea id="shareInvite" class="invite" readonly rows="5" aria-label="Invitation to copy" hidden></textarea>
+    <p class="note">The invitation holds the link and the code together; for more care, send the code separately. Nothing is sent for you.</p>
+    <p class="note" id="shareSessions" hidden></p><p class="note" id="shareLimited" hidden></p>
+    <button class="full-width" id="revokeShare">Revoke link</button>
+  </div>
+  <div id="shareFailed" hidden><p id="shareFailedTitle" class="share-problem"></p><p class="note" id="shareFailedText"></p><p class="note" id="shareInstall" hidden><a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" target="_blank" rel="noopener noreferrer">How to install cloudflared</a></p><button class="primary full-width" id="retryShare">Try again</button></div>
+  <div id="shareEnded" hidden><p id="shareEndedText" role="status"></p><button class="primary full-width" id="newShare">New link</button></div>
+</dialog>
+<dialog id="nameDialog" class="name-dialog" aria-labelledby="nameTitle" aria-describedby="nameDescription"><form id="nameForm"><h2 id="nameTitle"></h2><p id="nameDescription"></p><label class="field-label"><span id="nameLabel">Name</span><input id="nameInput" required maxlength="120" autocomplete="off"></label><p id="nameError" role="alert"></p><div class="dialog-actions"><button type="button" class="close-dialog">Cancel</button><button class="primary" id="nameSubmit" type="submit">Save</button></div></form></dialog>
+<div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button id="toastUndo" hidden>Undo</button></div>
+<div class="toast error" id="toastAlert" role="alert" hidden><span id="toastAlertText"></span></div>
+<script>/* CONFIG */
+/* APP */</script>
+</body></html>

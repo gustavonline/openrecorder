@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "repository": "gustavonline/openrecorder",
+  "version": "0.6.0-preview.11",
+  "build": 16,
+  "tag": "v0.6.0-preview.11",
+  "status": "pending",
+  "verifiedAt": null,
+  "platforms": {},
+  "plannedAssets": [
+    "OpenRecorder-0.6.0-preview.11-mac-arm64.zip",
+    "openrecorder-plugin-0.6.0-preview.11-darwin-arm64.zip",
+    "openrecorder-media-sources-0.6.0-preview.11.tar.gz",
+    "openrecorder-0.6.0-preview.11-source.tar.gz",
+    "SHA256SUMS",
+    "manifest.json"
+  ],
+  "notice": "No release is published yet. The page offers a download only after scripts/update-site-release.py has verified the published files and rewritten this file; until then it points to the install steps."
+}

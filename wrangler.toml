@@ -1,0 +1,5 @@
+# Cloudflare Pages for the product page. Only site/ is deployed; the repository root never is.
+# No account id here: wrangler uses the account you are logged in to (`wrangler login`).
+name = "openrecorder"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "./site"

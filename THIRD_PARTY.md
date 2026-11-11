@@ -1,0 +1,20 @@
+# Third-party code and inspiration
+
+OpenRecorder's original code is MIT licensed. The `licenses/` directory contains dependency notices and a versioned Rust dependency inventory.
+
+The shared capture adapter is a modified **scap 0.0.8** (MIT), vendored under `engine/vendor/scap`. Changes bound frame delivery to two queued frames, add timed retrieval, copy PipeWire rows with their actual stride, restrict negotiated pixel formats and update the Windows capture API integration. The Linux libspa-sys build uses bindgen 0.72 for current PipeWire headers. Native UI uses **egui/eframe**, microphone capture uses **CPAL**, and the macOS menu-bar and Windows notification-area icon use **tray-icon** (pinned `=0.21.3`, MIT OR Apache-2.0). The Linux tray is a StatusNotifierItem through **ksni** (pinned `=0.3.7`, Unlicense, features `async-io` and `blocking`; no GTK and no GTK event loop), which brings `arc-swap`, `crossbeam-queue`, `pastey` and `task-local` (MIT OR Apache-2.0) and uses the `zbus` stack the app already links; `zbus` (pinned `=5.19.0`, MIT) is declared directly on Linux only to watch the StatusNotifierWatcher and its hosts, with the features `ksni` already resolves. Their notices and bundled font notices are retained under `licenses/rust/`.
+
+The packaged media helpers are purpose-built **FFmpeg n8.0 + x264** executables, licensed **GPL-2.0-or-later**. They run as separate processes (macOS inside the app bundle; Linux and Windows next to the core in the experimental archives). Exact source revisions and the helper hashes are in `licenses/media-provenance.json`; the complete corresponding sources (FFmpeg 8.0 with the included AVFoundation patch, FFmpeg n8.0 for Linux and Windows, x264 at the recorded commit, and the build scripts that record the exact configure flags) are published beside each release as `openrecorder-media-sources-0.6.0-preview.11.tar.gz`, and must accompany any redistribution of the media helpers together with the GPL texts in `licenses/`. Windows includes the MinGW winpthreads runtime and its notices. No GPL third-party recorder UI or source has been copied into OpenRecorder's own UI.
+
+Visual/workflow references: [Screenity](https://github.com/alyssaxuu/screenity), [Cap](https://github.com/CapSoftware/Cap), [OpenPaperDesign](https://github.com/gustavonline/openpaperdesign) (the author's own project, whose product-page structure the website adapts) and [ScreenKite](https://www.screenkite.com/en). ScreenKite is a product reference, not treated as an open-source dependency. The toolbar, storage-first library, camera placement and restrained settings draw on these references; their artwork is not packaged.
+
+The former Swift-only engine and Neutralino/JPEG/browser bridge are absent from the recording path and packages, and no Node.js or Python is needed to run OpenRecorder (they appear only as optional build and test tools).
+
+Windows builds apply Mica through window-vibrancy (MIT/Apache-2.0), a macOS/Windows dependency; macOS applies no vibrancy and draws an opaque neutral surface. The Settings “Change…” folder chooser uses rfd (MIT) on Linux (portal), macOS and Windows. Product text uses Inter (SIL OFL); its license is in `licenses/Inter-OFL.txt`. Bloom (https://github.com/video-db/bloom, MIT) was inspected for visual workflow inspiration; its Electron/VideoDB runtime and artwork are not packaged.
+
+Preview.4 media helper changes: PAM/image2pipe preserves camera aspect without padding. Mac FFmpeg AVFoundation adds stable uniqueID selection; matching sources include the complete patch and actual build flags. Linux/Windows FFmpeg sources remain unmodified.
+
+## Website and release tooling
+
+The static product page in `site/` adapts the structure and style rules of the author's OpenPaperDesign page (MIT/Apache-2.0, same author); see `site/NOTICE.md`. It ships Inter (SIL OFL, `site/assets/fonts/`) and no framework or analytics. Codex and Claude Code marks on the page belong to their owners (Lobe Icons, MIT, `site/assets/licenses/`); no endorsement is implied.
+
