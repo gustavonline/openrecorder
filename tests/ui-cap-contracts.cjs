@@ -379,17 +379,43 @@ const loaded = async (o = {}) => {
     h.sandbox.navigator.clipboard.written.length = 0; const before = h.fetches.length;
     await h.$('copyInvite').onclick(); await settle();
     const [invite] = h.sandbox.navigator.clipboard.written;
-    eq(invite, 'I’m sharing a recording with you.\n\nLink: https://quiet-river.trycloudflare.com/TOKEN\nAccess code: K7QM-4P2X\n\nThe link has no end time; it works while I keep OpenRecorder open.');
-    ok(invite.length < 220 && !/Weekly|r1|s9/.test(invite), 'short, with no title or internal id');
+    eq(invite, 'Se min optagelse:\n\nhttps://quiet-river.trycloudflare.com/TOKEN\n\nAdgangskode:\nK7QM-4P2X\n\nÅbn linket i din browser og skriv adgangskoden. Du behøver ikke installere noget.\n\nLinket har ingen udløbstid, men det ligger ikke permanent online. Det virker kun, så længe min computer og delingen er tændt og online, og jeg kan stoppe det når som helst.');
+    ok(invite.length < 400 && !/Weekly|r1|s9/.test(invite), 'short, with no title or internal id');
+    // Plain text only, exact shape: the opening lines, the full URL alone on its line, the code alone on its line, no Markdown, quotes or backticks around either.
+    const lines = invite.split('\n');
+    eq(lines.slice(0, 6).join('|'), 'Se min optagelse:||https://quiet-river.trycloudflare.com/TOKEN||Adgangskode:|K7QM-4P2X', 'the opening, exactly');
+    eq(lines[2], 'https://quiet-river.trycloudflare.com/TOKEN', 'the URL is complete and alone on its line'); eq(lines[5], 'K7QM-4P2X', 'the code is alone on its line');
+    ok(/^[A-Z0-9-]+$/.test(lines[5]) && !/["'“”`.,;:!?]/.test(lines[5]), 'the code has no quotation marks, backticks or punctuation');
+    ok(!/[\r`*<>[\]]/.test(lines.filter((l, i) => i !== 2).join('')) && invite === invite.trim() && !invite.includes('\r'), 'no Markdown, HTML or carriage returns; no trailing whitespace');
+    ok(!/Link:|Access code|I’m sharing/.test(invite), 'nothing of the old English layout is left');
+    has(invite, 'ikke permanent online'); lacks(invite, /udløber/); has(invite, 'min computer og delingen er tændt og online');
+    // The separate copies are exactly the link and exactly the code.
+    h.sandbox.navigator.clipboard.written.length = 0;
+    await h.$('copyShare').onclick(); await settle(); await h.$('copyCode').onclick(); await settle();
+    eq(JSON.stringify(h.sandbox.navigator.clipboard.written), JSON.stringify(['https://quiet-river.trycloudflare.com/TOKEN', 'K7QM-4P2X']), 'Copy link and Copy code are unchanged');
     eq(h.fetches.length, before, 'copying calls no host and sends nothing'); eq(h.$('shareInvite').hidden, true);
     // A finite link names its end; the copies of link and code are unchanged.
-    never.never = undefined; never.expiresAt = Date.now() + 36e5; await h.t.refresh();
+    never.never = undefined; never.expiresAt = new Date(2099, 0, 5, 8, 5).getTime(); await h.t.refresh();
     await h.$('copyInvite').onclick(); await settle();
-    has(h.sandbox.navigator.clipboard.written.at(-1), 'The link works until'); has(h.sandbox.navigator.clipboard.written.at(-1), 'Link: https://quiet-river.trycloudflare.com/TOKEN');
+    const timed = h.sandbox.navigator.clipboard.written.at(-1);
+    eq(timed, 'Se min optagelse:\n\nhttps://quiet-river.trycloudflare.com/TOKEN\n\nAdgangskode:\nK7QM-4P2X\n\nÅbn linket i din browser og skriv adgangskoden. Du behøver ikke installere noget.\n\nLinket og adgangskoden udløber 5. januar kl. 08.05. Derudover virker linket kun, så længe min computer og delingen er tændt og online, så det kan også stoppe før.');
+    has(timed, 'Linket og adgangskoden udløber'); has(timed, 'Derudover virker linket kun'); lacks(timed, /permanent/);
+    // A link whose end the host did not report still says it depends on this computer, and invents no end.
+    never.expiresAt = undefined; await h.t.refresh(); await h.$('copyInvite').onclick(); await settle();
+    const open = h.sandbox.navigator.clipboard.written.at(-1);
+    ok(open !== timed && /^Se min optagelse:/.test(open), 'a new invitation was copied for this state'); has(open, 'Linket virker kun, så længe min computer og delingen er tændt og online.'); lacks(open, /udløber|permanent/);
+    // A code the host formatted oddly never reaches the message with quotation marks, backticks or closing punctuation around it.
+    const original = never.accessCode;
+    for (const [odd, clean] of [['"K7QM4P2X123".', 'K7QM4P2X123'], ['`K7QM4P2X123`', 'K7QM4P2X123'], ['“K7QM4P2X123”,', 'K7QM4P2X123']]) {
+      never.accessCode = odd; await h.t.refresh(); await h.$('copyInvite').onclick(); await settle();
+      eq(h.sandbox.navigator.clipboard.written.at(-1).split('\n')[5], clean, `${odd}: code line`);
+    }
+    never.accessCode = original;
+    never.expiresAt = new Date(2099, 0, 5, 8, 5).getTime(); await h.t.refresh();
     // Where the clipboard refuses, the invitation is shown selected for the person to copy; it is never logged.
     h.sandbox.navigator.clipboard.writeText = () => Promise.reject(new Error('denied'));
     await h.$('copyInvite').onclick(); await settle();
-    eq(h.$('shareInvite').hidden, false); has(h.$('shareInvite').value, 'Access code: K7QM-4P2X'); has(h.$('toastText').textContent, 'copy manually');
+    eq(h.$('shareInvite').hidden, false); has(h.$('shareInvite').value, 'Adgangskode:\nK7QM-4P2X'); eq(h.$('shareInvite').value, timed, 'the selectable fallback is the same text'); has(h.$('toastText').textContent, 'copy manually');
     st.shares = []; await h.t.refresh(); await settle(); eq(h.$('shareInvite').value, '', 'the invitation is cleared with the share'); eq(h.$('shareInvite').hidden, true);
   });
   await check('Copy invitation: a clipboard answer that arrives after the dialog closed, the share ended or another share opened changes nothing and restores no secret', async () => {
@@ -451,9 +477,9 @@ const loaded = async (o = {}) => {
     eq(g.$('sharedCount').textContent, '', 'expired links no longer count as shared');
   });
 
-  await check('embedded ui/initialize reports the preview.11 host version', async () => {
+  await check('embedded ui/initialize reports the preview.12 host version', async () => {
     const st = stateOf(); const h = boot({ embedded: true, mediaKey: 'M', api: async () => { throw 0; }, host: m => m.method === 'ui/initialize' ? { hostContext: {} } : { structuredContent: st } }); await settle();
-    const init = h.posted.find(m => m.method === 'ui/initialize'); eq(init.params.appInfo.version, '0.6.0-preview.11'); has(app, /version:'0\.6\.0-preview\.11'/); lacks(app, 'preview.6');
+    const init = h.posted.find(m => m.method === 'ui/initialize'); eq(init.params.appInfo.version, '0.6.0-preview.12'); has(app, /version:'0\.6\.0-preview\.12'/); lacks(app, 'preview.6');
   });
 
   await check('share: a cancelled share (failed "Sharing was cancelled") is not offered as a share or counted', async () => {
@@ -728,7 +754,7 @@ const loaded = async (o = {}) => {
     }
   });
   await check('an unanswered Record press (or any change) is reported as uncertain, refreshed, and not replayed', async () => {
-    const st = stateOf(); let posts = 0;
+    const st = stateOf({ capture: { phase: 'idle', generation: 4, launch: 'launch-aaaa-0001', known: true } }); let posts = 0;
     const h = boot({ key: 'K', api: async (u, o) => { if (o.body) { posts++; return never(); } return okJson(st); } }); await settle();
     const before = h.fetches.length; h.$('capRecord').click(); await settle(10); await fire(h, 20000); await settle(10);
     eq(posts, 1); has(h.$('toastAlertText').textContent, 'unknown whether'); ok(h.fetches.length > before, 'the host was re-read afterwards');
@@ -803,7 +829,7 @@ const loaded = async (o = {}) => {
     }
   });
   await check('a non-2xx answer with an unreadable body is a short generic refusal, never a success and never raw parser text', async () => {
-    const st = stateOf(); let posts = 0;
+    const st = stateOf({ capture: { phase: 'idle', generation: 4, launch: 'launch-aaaa-0001', known: true } }); let posts = 0;
     const h = boot({ key: 'K', api: async (u, o) => { if (o.body) { posts++; return { ok: false, status: 500, json: async () => { throw new SyntaxError('Unexpected token <'); } }; } return okJson(st); } }); await settle();
     h.$('capRecord').click(); await settle(10);
     eq(posts, 1); eq(h.$('toastAlertText').hidden === undefined, false); has(h.$('toastAlertText').textContent, 'Operation failed'); lacks(h.$('toastAlertText').textContent, /Unexpected|SyntaxError/);
@@ -1160,13 +1186,22 @@ const loaded = async (o = {}) => {
     h.$('capRecord').click(); await settle(); const [, second] = startsOf(h);
     ok(second && second.nonce !== sent.nonce, 'a later press has its own number');
   });
-  await check('Record while the app is not running is still one press: it carries only a number and expiry, never a launch it does not have', async () => {
+  await check('the main control while the app is not ready is Open OpenRecorder, not Record: neutral, no red dot, it sends open-recorder only, and no Record or countdown is queued for later', async () => {
     const h = await loaded({ state: stateOf({ capture: { phase: 'unavailable', generation: 0, known: false } }) });
-    eq(h.$('capture').hidden, false, 'the group is there even before the app reports'); eq(h.$('capRecord').disabled, false);
+    eq(h.$('capture').hidden, false, 'the group is there even before the app reports');
+    eq(h.$('capRecord').dataset.phase, 'closed'); eq(h.$('capRecordLabel').textContent, 'Open'); eq(h.$('capRecord').attrs['aria-label'], 'Open OpenRecorder'); eq(h.$('capRecord').disabled, false);
+    has(h.$('capRecord').title, 'records nothing until you press Record');
     h.$('capRecord').click(); await settle();
-    const [sent] = startsOf(h); eq(startsOf(h).length, 1);
-    eq(Object.keys(sent).sort().join(','), 'expires,nonce'); has(h.$('toastText').textContent, 'Starting OpenRecorder');
-    const plain = await loaded(); plain.$('capRecord').click(); await settle(); eq(startsOf(plain).length, 1, 'an older host with no capture report behaves the same');
+    eq(ofOp(h, 'open-recorder').length, 1, 'one open'); eq(JSON.stringify(ofOp(h, 'open-recorder')[0]), '{}');
+    eq(startsOf(h).length, 0, 'no Record press is ever sent while the app is not ready'); eq(sentOf(h).length, 0);
+    eq(h.$('capRecord').disabled, true, 'it says Opening…'); eq(h.$('capRecordLabel').textContent, 'Opening…');
+    const plain = await loaded(); plain.$('capRecord').click(); await settle();
+    eq(startsOf(plain).length, 0, 'an older host with no capture report behaves the same'); eq(ofOp(plain, 'open-recorder').length, 1);
+    // Then the app reports idle: the same control is Record, with the red dot, and a press is a bound start-recording.
+    const ready = await loaded({ state: stateOf({ capture: capOf() }) });
+    eq(ready.$('capRecord').dataset.phase, 'idle'); eq(ready.$('capRecordLabel').textContent, 'Record'); eq(ready.$('capRecord').attrs['aria-label'], 'Record');
+    ready.$('capRecord').click(); await settle(); const [sent] = startsOf(ready); eq(startsOf(ready).length, 1);
+    eq(Object.keys(sent).sort().join(','), 'expires,generation,launch,nonce'); eq(ofOp(ready, 'open-recorder').length, 0);
   });
   await check('in an agent host Record goes through the page-only tool, once, and never through the agent-visible tool', async () => {
     const { h, uiCalls: allUi, actionCalls } = embeddedHost(stateOf({ capture: capOf({ generation: 2 }) }), { answers: { 'start-recording': { queued: true } } }); await settle();
@@ -1666,6 +1701,162 @@ const loaded = async (o = {}) => {
     menu.onclick({ target: { closest: () => ({ dataset: { host: 'browser' } }) } }); await settle();
     ok(actionCalls.some(c => c.op === 'open-library'), 'it asks the library to open the browser, which returns no access link');
     eq((await loaded()).$('hostMenuBox').hidden, true);
+  });
+  // ---- Plugin-only lifecycle (preview.12): Home runs without the recorder app; the recorder opens ready and never records ----
+  const coldRecorder = (state = 'not-running') => ({ state, ready: false, opening: state === 'opening', settingsPages: true });
+  const coldState = (state, over = {}) => stateOf({ recorder: coldRecorder(state), ...over });
+  const privacyClick = kind => ({ target: { closest: sel => (sel === '[data-privacy]' ? { dataset: { privacy: kind } } : null) } });
+  const noRecording = (h, why) => { eq(sentOf(h).length, 0, `${why}: no capture command`); eq(startsOf(h).length, 0, `${why}: no Record press`); eq(h.media.touched, false, `${why}: no device touched`); };
+  await check('cold Settings › Permissions: no "Not reported yet", an explanation and an Open OpenRecorder button, and all three permission buttons open their system page through the library, asking for nothing', async () => {
+    const h = await loaded({ state: coldState() });
+    h.t.openSettings('permissions'); const perms = h.$('settingsPane').innerHTML;
+    lacks(perms, 'Not reported yet'); has(perms, 'Unknown until OpenRecorder is open'); has(perms, /data-open-recorder/); has(perms, 'asks for nothing and changes nothing'); has(perms, 'reported by OpenRecorder itself'); lacks(perms, /macOS/);
+    const linux = await loaded({ state: coldState('not-running', { platform: 'linux' }) }); linux.t.openSettings('permissions'); const lp = linux.$('settingsPane').innerHTML; has(lp, 'Open OpenRecorder'); lacks(lp, /data-privacy=/); lacks(lp, 'system page directly'); lacks(lp, /macOS|Windows/);
+    for (const kind of ['screen', 'camera', 'mic']) has(perms, new RegExp(`data-privacy="${kind}"`));
+    for (const kind of ['screen', 'camera', 'mic']) { h.$('settingsPane').onclick(privacyClick(kind)); await settle(); }
+    eq(JSON.stringify(ofOp(h, 'open-privacy-settings')), JSON.stringify([{ kind: 'screen' }, { kind: 'camera' }, { kind: 'mic' }]), 'each button asks the library for its own page');
+    eq(ofOp(h, 'open-recorder').length, 0, 'opening a system page does not open the app'); noRecording(h, 'cold permission buttons');
+    // With the app running the same buttons still go through its own menu, exactly as before.
+    const live = await loaded({ state: stateOf({ capture: capOf() }) }); live.t.openSettings('permissions');
+    live.$('settingsPane').onclick(privacyClick('camera')); await settle();
+    eq(JSON.stringify(commandsOf(live)), JSON.stringify([{ command: 'open-privacy', kind: 'camera' }])); eq(ofOp(live, 'open-privacy-settings').length, 0);
+  });
+  await check('a permission button that cannot open its page says why instead of doing nothing (host refusal, and a host window without the page tool)', async () => {
+    const refuse = boot({ key: 'OWNERKEY', api: async (url, opts) => { const b = opts.body ? JSON.parse(opts.body) : null; return b && b.op === 'open-privacy-settings' ? { ok: false, status: 400, json: async () => ({ error: 'This system has no privacy page to open.' }) } : okJson(coldState()); } }); await settle();
+    refuse.t.openSettings('permissions'); refuse.$('settingsPane').onclick(privacyClick('screen')); await settle();
+    eq(refuse.$('toastAlert').hidden, false); has(refuse.$('toastAlertText').textContent, 'no privacy page');
+    const { h, uiCalls } = embeddedHost(coldState(), { ui: 'unsupported' }); await settle();
+    h.t.openSettings('permissions'); h.$('settingsPane').onclick(privacyClick('mic')); await settle();
+    eq(h.$('toastAlert').hidden, false); has(h.$('toastAlertText').textContent, 'can’t open System Settings'); eq(uiCalls.filter(c => c.op === 'open-privacy-settings').length, 0, 'a window already known to lack the tool does not try it');
+    const ok = embeddedHost(coldState()); await settle(); ok.h.t.openSettings('permissions'); ok.h.$('settingsPane').onclick(privacyClick('camera')); await settle();
+    eq(JSON.stringify(ok.uiCalls.filter(c => c.op === 'open-privacy-settings').map(c => [c.data, c.ui])), JSON.stringify([[{ kind: 'camera' }, 'UI-SESSION-KEY']]), 'in an agent host it goes through the page-only tool with this window\'s key');
+  });
+  await check('cold Home says the recorder app is not running and offers Open OpenRecorder; with the app reporting there is no banner', async () => {
+    const h = await loaded({ state: coldState() });
+    eq(h.$('recorderBanner').hidden, false); has(h.$('recorderTitle').textContent, 'isn’t running'); has(h.$('recorderText').textContent, 'nothing is recorded until you press Record'); eq(h.$('recorderOpen').textContent, 'Open OpenRecorder'); eq(h.$('recorderOpen').disabled, false);
+    for (const [state, title, button, off] of [['opening', 'Opening OpenRecorder', 'Opening…', true], ['not-responding', 'isn’t responding', 'Try again', false]]) {
+      const g = await loaded({ state: coldState(state) }); has(g.$('recorderTitle').textContent, title); eq(g.$('recorderOpen').textContent, button); eq(g.$('recorderOpen').disabled, off);
+    }
+    const up = await loaded({ state: stateOf({ capture: capOf(), recorder: { state: 'ready', ready: true, opening: false, settingsPages: true } }) });
+    eq(up.$('recorderBanner').hidden, true);
+    const older = await loaded({ state: stateOf() }); eq(older.$('recorderBanner').hidden, false, 'an older host that sends no recorder block is read from capture');
+    lacks(html, /id="newRecording"/);
+  });
+  await check('Open OpenRecorder (cold) opens it ready: one open-recorder call, waits for the first report, says ready, and never records, queues a press or touches a device', async () => {
+    let up = false; const st = () => (up ? stateOf({ capture: capOf(), recorder: { state: 'ready', ready: true, opening: false, settingsPages: true } }) : coldState());
+    const h = boot({ key: 'OWNERKEY', api: async () => okJson(st()) }); await settle();
+    h.$('recorderOpen').onclick(); await settle();
+    eq(ofOp(h, 'open-recorder').length, 1); eq(JSON.stringify(ofOp(h, 'open-recorder')[0]), '{}', 'the request carries nothing to record');
+    has(h.$('recorderTitle').textContent, 'Opening OpenRecorder'); eq(h.$('recorderOpen').disabled, true, 'a second press while it opens does nothing');
+    h.$('recorderOpen').onclick(); await settle(); eq(ofOp(h, 'open-recorder').length, 1);
+    up = true; for (let i = 0; i < 8 && h.$('toastText').textContent.indexOf('OpenRecorder is ready') < 0; i++) await h.runTimeout();
+    has(h.$('toastText').textContent, 'OpenRecorder is ready. Press Record when you want to start.'); eq(h.$('recorderBanner').hidden, true);
+    noRecording(h, 'open ready');
+  });
+  await check('Open OpenRecorder: a launch the host refuses shows its reason and Try again; an app that never reports times out visibly and can be retried; none of it records', async () => {
+    const refused = boot({ key: 'OWNERKEY', api: async (url, opts) => { const b = opts.body ? JSON.parse(opts.body) : null; return b && b.op === 'open-recorder' ? { ok: false, status: 400, json: async () => ({ error: 'OpenRecorder may be recording. Stop and quit every OpenRecorder window and host, then try again.' }) } : okJson(coldState()); } }); await settle();
+    refused.$('recorderOpen').onclick(); await settle();
+    has(refused.$('recorderTitle').textContent, 'didn’t open'); has(refused.$('recorderText').textContent, 'may be recording'); eq(refused.$('recorderOpen').textContent, 'Try again'); eq(refused.$('recorderOpen').disabled, false);
+    eq(refused.$('toastAlert').hidden, false); noRecording(refused, 'refused open');
+    // The app never reports: after the wait Home says so and offers the same button; pressing it asks again, once.
+    const RealDate = Date, clock = { offset: 0 };
+    const h = boot({ key: 'OWNERKEY', api: async () => okJson(coldState('opening')) }); await settle();
+    h.sandbox.Date = class extends RealDate { constructor(...a) { a.length ? super(...a) : super(RealDate.now() + clock.offset); } static now() { return RealDate.now() + clock.offset; } };
+    h.$('recorderOpen').onclick(); await settle(); eq(ofOp(h, 'open-recorder').length, 1);
+    clock.offset = 26000; for (let i = 0; i < 6; i++) await h.runTimeout();
+    has(h.$('recorderTitle').textContent, 'didn’t report in time'); eq(h.$('recorderOpen').textContent, 'Try again'); eq(h.$('recorderOpen').disabled, false);
+    h.$('recorderOpen').onclick(); await settle(); eq(ofOp(h, 'open-recorder').length, 2, 'Try again asks again');
+    has(h.$('recorderTitle').textContent, 'Opening OpenRecorder'); noRecording(h, 'timeout and retry');
+    // In a host window without the page tool there is nothing to press: it says to use the browser.
+    const unsupported = embeddedHost(coldState(), { ui: 'unsupported' }); await settle();
+    unsupported.h.$('recorderOpen').onclick(); await settle();
+    has(unsupported.h.$('toastAlertText').textContent, 'Open Home in your browser');
+  });
+  await check('a cold main-control press never sends start-recording, even repeatedly or after the app has come up: Open OpenRecorder cannot carry a Record', async () => {
+    let up = false; const st = () => (up ? stateOf({ capture: capOf(), recorder: { state: 'ready', ready: true, opening: false, settingsPages: true } }) : coldState());
+    const h = boot({ key: 'OWNERKEY', api: async () => okJson(st()) }); await settle();
+    h.$('capRecord').onclick(); await settle(); h.$('capRecord').onclick(); await settle();
+    up = true; for (let i = 0; i < 8; i++) await h.runTimeout();
+    eq(startsOf(h).length, 0); eq(sentOf(h).length, 0); eq(h.$('capRecordLabel').textContent, 'Record', 'once ready it is Record again, and nothing was recorded for it');
+    noRecording(h, 'cold open then ready');
+  });
+  await check('a stale idle report is not readiness: while the library says the recorder is not responding Home shows Open (never an enabled Record), says so, and the opening poll cannot announce ready from old data', async () => {
+    const stale = () => stateOf({ capture: capOf({ ageMs: 13000, stale: false }), recorder: { state: 'not-responding', ready: false, opening: false, settingsPages: true } });
+    const h = await loaded({ state: stale() });
+    eq(h.$('recorderBanner').hidden, false); has(h.$('recorderTitle').textContent, 'isn’t responding');
+    eq(h.$('capRecord').dataset.phase, 'closed'); eq(h.$('capRecordLabel').textContent, 'Open'); has(h.$('capRecord').attrs['aria-label'], 'Open OpenRecorder');
+    h.t.openSettings('permissions'); const perms = h.$('settingsPane').innerHTML; has(perms, 'Unknown until OpenRecorder is open'); lacks(perms, 'No problem reported'); lacks(perms, 'Allowed');
+    h.$('capRecord').click(); await settle();
+    eq(startsOf(h).length, 0, 'the press cannot be a Record'); eq(ofOp(h, 'open-recorder').length, 1);
+    // The library keeps answering with the old report: the poll waits, and never says ready.
+    for (let i = 0; i < 6; i++) await h.runTimeout();
+    lacks(h.$('toastText').textContent, 'OpenRecorder is ready'); eq(h.$('capRecordLabel').textContent === 'Record', false);
+    // The same state after the app really reports (ready: true): Record is back, and a press is a bound Record.
+    const fresh = await loaded({ state: stateOf({ capture: capOf(), recorder: { state: 'ready', ready: true, opening: false, settingsPages: true } }) });
+    eq(fresh.$('capRecordLabel').textContent, 'Record'); eq(fresh.$('recorderBanner').hidden, true);
+    // A take's last report stays the last known state while the app is quiet: Stop and the timer guards still apply, no second app is opened.
+    const take = await loaded({ state: stateOf({ capture: capOf({ phase: 'recording', generation: 5, elapsedMs: 9000, stale: true }), recorder: { state: 'not-responding', ready: false, opening: false, settingsPages: true } }) });
+    eq(take.$('capRecord').dataset.phase, 'recording'); eq(take.$('capRecordLabel').textContent, 'Stop'); eq(take.$('recorderBanner').hidden, true);
+    take.$('capRecord').click(); await settle(); eq(ofOp(take, 'open-recorder').length, 0, 'no second app is opened over a take'); eq(startsOf(take).length, 0);
+  });
+  await check('the GUI-B finding: with focus ON the Open button, the open Permissions pane moves unknown -> opening -> ready by itself (no reload, no blur), keeps its focus, replaces nothing, and records nothing', async () => {
+    let up = false;
+    const st = () => (up ? stateOf({ capture: capOf({ inputs: { camera: { mark: 'armed' }, microphone: { mark: 'armed' } } }), recorder: { state: 'ready', ready: true, opening: false, settingsPages: true } }) : coldState());
+    const h = boot({ key: 'OWNERKEY', api: async () => okJson(st()) }); await settle();
+    h.t.openSettings('permissions');
+    const pane = h.$('settingsPane'); let writes = 0, markup = pane.innerHTML;
+    Object.defineProperty(pane, 'innerHTML', { configurable: true, get: () => markup, set: v => { writes++; markup = v; } });
+    const rendered = markup; has(rendered, 'id="permOpen"'); has(rendered, 'id="permStatus-camera"'); has(rendered, 'Unknown until OpenRecorder is open');
+    // The person presses Open: a real button now holds focus, inside the pane (the fake DOM's contains() is told so).
+    const openButton = h.$('permOpen'); pane.contains = el => el === openButton; h.dom.document.activeElement = openButton;
+    pane.onclick({ target: { closest: sel => (sel === '[data-open-recorder]' ? {} : null) } }); await settle();
+    eq(ofOp(h, 'open-recorder').length, 1); eq(h.$('permOpen').textContent, 'Opening…'); eq(h.$('permOpen').disabled, true); eq(h.$('permCold').hidden, false); has(h.$('permWhy').textContent, 'Opening OpenRecorder');
+    eq(h.dom.document.activeElement, openButton, 'focus is still on the button while it says Opening…');
+    // The app reports (the library now says ready). The poll refreshes Home; the focused pane must follow.
+    up = true; for (let i = 0; i < 8 && !h.$('permCold').hidden; i++) await h.runTimeout();
+    eq(h.$('permCold').hidden, true, 'the Unknown/Open note is gone without a reload or a blur');
+    has(h.$('permStatus-screen').textContent, 'Allowed')
+    eq(h.$('permStatus-camera').textContent, 'No problem reported'); eq(h.$('permStatus-mic').textContent, 'No problem reported');
+    lacks(h.$('permStatus-camera').textContent + h.$('permStatus-mic').textContent + h.$('permNote').textContent, /Live/i);   // armed is not open hardware
+    eq(writes, 0, 'the pane was patched in place, never rebuilt'); eq(h.dom.document.activeElement, openButton, 'focus was never taken from the button');
+    for (let i = 0; i < 8 && h.$('toastText').textContent.indexOf('OpenRecorder is ready') < 0; i++) await h.runTimeout();
+    has(h.$('toastText').textContent, 'OpenRecorder is ready. Press Record when you want to start.'); eq(writes, 0); eq(h.dom.document.activeElement, openButton);
+    noRecording(h, 'a focused Open button that becomes ready');
+    // The other outcomes reach the focused pane by themselves too: refused (with its reason), and never reported in time.
+    const refused = boot({ key: 'OWNERKEY', api: async (u, o) => { const b = o.body && JSON.parse(o.body); return b && b.op === 'open-recorder' ? { ok: false, status: 400, json: async () => ({ error: 'OpenRecorder may be recording. Stop and quit every OpenRecorder window and host, then try again.' }) } : okJson(coldState()); } }); await settle();
+    refused.t.openSettings('permissions'); const rb = refused.$('permOpen'); refused.$('settingsPane').contains = el => el === rb; refused.dom.document.activeElement = rb;
+    refused.$('settingsPane').onclick({ target: { closest: sel => (sel === '[data-open-recorder]' ? {} : null) } }); await settle();
+    has(refused.$('permWhy').textContent, 'may be recording'); eq(refused.$('permOpen').textContent, 'Try again'); eq(refused.$('permOpen').disabled, false); eq(refused.dom.document.activeElement, rb); noRecording(refused, 'refused open');
+    const RealDate = Date, clock = { offset: 0 };
+    const slow = boot({ key: 'OWNERKEY', api: async () => okJson(coldState('opening')) }); await settle();
+    slow.sandbox.Date = class extends RealDate { constructor(...a) { a.length ? super(...a) : super(RealDate.now() + clock.offset); } static now() { return RealDate.now() + clock.offset; } };
+    slow.t.openSettings('permissions'); const sb = slow.$('permOpen'); slow.$('settingsPane').contains = el => el === sb; slow.dom.document.activeElement = sb;
+    slow.$('settingsPane').onclick({ target: { closest: sel => (sel === '[data-open-recorder]' ? {} : null) } }); await settle();
+    clock.offset = 26000; for (let i = 0; i < 6; i++) await slow.runTimeout();
+    has(slow.$('permWhy').textContent, 'didn’t report in time'); eq(slow.$('permOpen').textContent, 'Try again'); eq(slow.$('permOpen').disabled, false); eq(slow.dom.document.activeElement, sb);
+  });
+  await check('Permissions is patched, not rebuilt: a live readiness change never replaces the pane or its focused button, and a form pane with a pending edit is still left alone', async () => {
+    let up = false;
+    const st = () => (up ? stateOf({ capture: capOf({ screenState: 'denied', inputs: { camera: { mark: 'access-off' }, microphone: { mark: 'live', name: 'Mic' } } }), recorder: { state: 'ready', ready: true, opening: false, settingsPages: true } }) : coldState());
+    const h = boot({ key: 'OWNERKEY', api: async () => okJson(st()) }); await settle(); h.t.openSettings('permissions');
+    const pane = h.$('settingsPane'); let writes = 0, markup = pane.innerHTML;
+    Object.defineProperty(pane, 'innerHTML', { configurable: true, get: () => markup, set: v => { writes++; markup = v; } });
+    const focus = {}; pane.contains = el => el === focus; h.dom.document.activeElement = focus;
+    up = true; await h.t.refresh(); await settle();
+    eq(writes, 0, 'no rebuild while a pane element has focus'); eq(h.$('permCold').hidden, true);
+    has(h.$('permStatus-screen').textContent, 'Off for OpenRecorder'); has(h.$('permStatus-camera').textContent, 'Off in System Settings'); has(h.$('permStatus-mic').textContent, 'Allowed. Live now.'); has(h.$('permNote').textContent, 'Live now: microphone');
+    // Backend staleness still wins in the patched pane: the app goes quiet (an old idle report remains), and the focused pane says so by itself.
+    h.sandbox.fetch = async () => okJson(stateOf({ capture: capOf({ ageMs: 13000 }), recorder: { state: 'not-responding', ready: false, opening: false, settingsPages: true } }));
+    await h.t.refresh(); await settle();
+    eq(h.$('permCold').hidden, false); has(h.$('permWhy').textContent, 'isn’t responding'); eq(h.$('permOpen').textContent, 'Try again'); has(h.$('permStatus-camera').textContent, 'Unknown until OpenRecorder is open'); eq(writes, 0);
+    // A pane with form fields keeps its pending edit: no rebuild while focus is inside it, and it follows once focus leaves.
+    const g = await loaded({ state: stateOf() }); g.t.openSettings('general');
+    const form = g.$('settingsPane'); let formWrites = 0, formMarkup = form.innerHTML;
+    Object.defineProperty(form, 'innerHTML', { configurable: true, get: () => formMarkup, set: v => { formWrites++; formMarkup = v; } });
+    const field = {}; form.contains = el => el === field; g.dom.document.activeElement = field;
+    const changed = stateOf({ freeBytes: 1e9 }); g.sandbox.fetch = async () => okJson(changed); await g.t.refresh(); await settle();
+    eq(formWrites, 0, 'a pending edit is never rebuilt over');
+    g.dom.document.activeElement = g.dom.document.body; await g.t.refresh(); await settle(); eq(formWrites, 1, 'once focus has left the form it follows the change, with one rebuild');
   });
   await check('Settings in Home has Permissions and About, Show camera next to the four shapes, and the native Settings route opens it', async () => {
     const h = await loaded({ state: stateOf({ settings: { ...stateOf().settings, showCamera: true }, capture: capOf({ screenState: 'denied', inputs: { camera: { mark: 'access-off' }, microphone: { mark: 'live', name: 'MacBook Pro Microphone' } } }) }) });

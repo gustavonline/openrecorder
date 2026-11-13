@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "openrecorder",
-  "version": "0.6.0-preview.11",
+  "version": "0.6.0-preview.12",
   "description": "A small native screen recorder with a local library, separate originals and temporary sharing. The plugin’s tools can organise and share recordings but cannot start one.",
   "author": {
     "name": "Gustav Online",

@@ -146,7 +146,11 @@ def check_policy():
 def check_release(network):
     r = json.loads((SITE / 'releases.json').read_text())
     plugin = json.loads((rt.ROOT / 'plugin.json').read_text())
-    (ok if r['version'] == plugin['version'] and r['tag'] == 'v' + plugin['version'] and r['repository'] == rt.REPO else fail)('releases.json: version, tag and repository match plugin.json')
+    order = lambda v: tuple(int(n) for n in re.findall(r'\d+', v))
+    # A pending file describes the version being prepared. A published one describes a release that is out; the source may already
+    # be ahead of it (the next version is unreleased), but never behind it.
+    same = r['version'] == plugin['version']
+    (ok if r['tag'] == 'v' + r['version'] and r['repository'] == rt.REPO and (same if r['status'] == 'pending' else order(r['version']) <= order(plugin['version'])) else fail)('releases.json: tag and repository match, and its version is this source\'s (pending) or this source\'s or an earlier release (published)')
     if r['status'] == 'pending':
         (ok if not r['platforms'] and r['verifiedAt'] is None else fail)('releases.json is pending: no platform asset, no verification record, so no download button')
         return
@@ -167,7 +171,7 @@ def check_platform_claim():
     """The macOS minimum on the public pages must be the one the shipped helper really needs (recorded in the provenance file)."""
     minimum = json.loads((rt.ROOT / 'licenses/media-provenance.json').read_text())['helpers']['mac-arm64']['machOMinos']
     wrong = re.compile(r'macOS 12\.3|12\.3\+|12\.3 or later')
-    for name in ('README.md', 'docs/install.md', 'docs/release-notes-0.6.0-preview.11.md', 'site/index.html'):
+    for name in ('README.md', 'docs/install.md', 'docs/release-notes-0.6.0-preview.11.md', 'docs/release-notes-0.6.0-preview.12.md', 'site/index.html'):
         text = (rt.ROOT / name).read_text()
         (ok if f'macOS {minimum} or later' in text else fail)(f'{name}: states macOS {minimum} or later')
         (ok if not wrong.search(text) else fail)(f'{name}: no older macOS minimum is claimed')

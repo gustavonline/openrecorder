@@ -22,6 +22,16 @@ One native executable (Rust) plays four roles, chosen by its first argument. Eve
 - **Home**: one page (`ui/`, inlined by the host) used in the browser and inside an agent window, with Library, a recording page with a player, Settings (General, Recording, Camera & Microphone, Permissions, Sharing, About) and the Record controls.
 - **Guest server** (sharing): a separate bounded HTTP listener bound to loopback per share, exposed by an optional Cloudflare Quick Tunnel (`cloudflared`, started only when you share). It serves the unlock page, the stylesheet, and after a correct code the player, the video (GET/HEAD/Range) and a download of **one pinned combined file**. It has no owner route, no library, no Settings and no MCP.
 
+## Library and recorder
+
+The library host and the recorder app are separate processes. Home talks only to the host. The host reports the recorder as `ready` (it has published a capture report in the last 12 s), `opening` (a launch is in flight, for up to 25 s), `not-responding` (registered but silent) or `not-running`, as `recorder` in the library state. Permissions, devices and capture facts exist only in the recorder's own report, so they are unknown, never guessed, while it is not reporting.
+
+Two page-only operations (`openrecorder_ui` / owner HTTP; never `PUBLIC_OPS`, never a free-text target) serve the person's buttons while the recorder is closed: `open-recorder` (the same passive launch as the agent's `open-studio`, minus any waiting Record press) and `open-privacy-settings` (opens one of three fixed system pages; asks for nothing, changes nothing). Nothing carries a Record across the recorder's start: while it is not reporting, the main control is Open OpenRecorder, and an older page that still sends `start-recording` gets the same passive open with a message, never a queued take. Once the recorder reports idle, Record is `start-recording` bound to that launch and take (nonce, expiry, single use), exactly as the menu's Record is.
+
+### A library that is already running
+
+A plugin session that finds a library running only describes it: its version is read from its own `state` answer (the preview.11 descriptor has none), `openrecorder_home` carries `backend` (`version`, `current`, `pageOps`), and the page operations a library without a `recorder` block lacks are refused in plain words. **Ordinary use never replaces, quits or otherwise touches a running library**, whatever its version or state: no plugin session, Home, agent or UI control sends it a Quit, and nothing is migrated from it (links and their keys live in that process and end when it quits). Moving an installation to a new version is a separate, deliberate step for whoever manages it, in a quiet window: `scripts/handoff-precheck.py` reads the library's own state and says whether it looks idle (strictly: a well-formed older version, no take, every share failed or none, no recorder app, no OpenRecorder program other than bridges and hosts running); if every caller is quiet, the library's own normal Quit can then be sent once and the new version takes the operating-system lease with the same data. The operating-system lease stays the only authority on who owns the library, and nothing is ever force-killed.
+
 ## What an agent can and cannot do
 
 The MCP server lists three tools:

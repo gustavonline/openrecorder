@@ -18,6 +18,7 @@ node tests/ui-cap-contracts.cjs
 cd engine && cargo test --features desktop-ui
 python3 tests/package-manifests.py        # needs engine/runtime archives from scripts/build-native.py
 python3 scripts/check-site.py             # the static website
+python3 tests/mac-zip.py                  # on a Mac: the release ZIP carries no build-machine extended attributes (no ._ entries)
 ```
 
 `tests/host-lifecycle.py`, `tests/rust-mcp-lifecycle.py` and `tests/slow-host-lease.py` take a built `openrecorder-core` and run against a throw-away home; they never touch a device. Anything that records, shares publicly, or needs a real permission is a manual check: do not automate it, and describe what you ran.

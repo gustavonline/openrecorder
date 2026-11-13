@@ -81,7 +81,7 @@ pub fn shutdown() {
         }
     }
 }
-const VERSION: &str = "0.6.0-preview.11";
+const VERSION: &str = "0.6.0-preview.12";
 // The only operations an agent may request through MCP. Every `native-*` op is deliberately absent. No
 // operation, here or over HTTP, asks the toolbar to activate camera or microphone.
 const PUBLIC_OPS: &[&str] = &["state", "open-studio", "open-library", "settings", "folder", "update", "stop", "reveal", "open-file", "share", "unshare", "quit"];
@@ -135,7 +135,7 @@ fn server_info() -> Value {
 }
 // Operations only the library page itself needs. They are owner operations, never in `PUBLIC_OPS`: an agent-visible
 // tool cannot name them, and the app-only tool that carries them is hidden from the model by its `visibility`.
-const UI_OPS: &[&str] = &["media-read", "media-session", "capture-command", "start-recording"];
+const UI_OPS: &[&str] = &["media-read", "media-session", "capture-command", "start-recording", "open-recorder", "open-privacy-settings"];
 /// Largest piece of a file one media call returns (base64 grows it by a third). A poster is one piece.
 const MEDIA_CHUNK: u64 = 192 * 1024;
 // Initialize accepts either dated revision. Anything else is answered with the latest one.
@@ -546,6 +546,23 @@ fn sanitize_capture(v: &Value) -> Result<Value, String> {
     Ok(out)
 }
 impl Store {
+    /// Where the recorder app (the native menu-bar or tray program) stands, in words Home can act on. It says nothing about
+    /// permissions: those come only from the app's own report, and are shown as unknown while it is not reporting.
+    fn recorder_view(&self) -> Value {
+        let t = now();
+        let ready = self.pid.is_some() && !self.capture.is_null() && t.saturating_sub(self.capture_at) <= HUMAN_REPORT_MAX_AGE_MS;
+        let opening = !ready && self.launched_at != 0 && t.saturating_sub(self.launched_at) < RECORDER_OPENING_MS;
+        let state = if ready {
+            "ready"
+        } else if opening {
+            "opening"
+        } else if self.pid.is_some() {
+            "not-responding"
+        } else {
+            "not-running"
+        };
+        json!({"state":state,"ready":ready,"opening":opening,"settingsPages":cfg!(any(target_os = "macos", target_os = "windows"))})
+    }
     /// What Home renders for capture. Never invented: before the native app publishes, the phase is `unavailable`.
     fn capture_view(&self) -> Value {
         if self.capture.is_null() {
@@ -653,7 +670,7 @@ impl Store {
         save(&self.home.join("library.json"), &self.index)
     }
     fn snapshot(&self) -> Value {
-        json!({"version":VERSION,"platform":if cfg!(target_os="macos"){"darwin"}else if cfg!(target_os="windows"){"win32"}else{"linux"},"root":self.config["root"],"settings":self.config["settings"],"folders":self.index["folders"],"recordings":self.index["recordings"],"totalBytes":self.index["recordings"].as_array().unwrap().iter().map(|r|r["bytes"].as_u64().unwrap_or(0)).sum::<u64>(),"freeBytes":free_space(self.config["root"].as_str().unwrap_or("")),"active":self.active,"shares":[],"capture":self.capture_view(),"homeAgeMs":if self.home_seen_at == 0 { Value::Null } else { json!(now().saturating_sub(self.home_seen_at)) }})
+        json!({"version":VERSION,"platform":if cfg!(target_os="macos"){"darwin"}else if cfg!(target_os="windows"){"win32"}else{"linux"},"root":self.config["root"],"settings":self.config["settings"],"folders":self.index["folders"],"recordings":self.index["recordings"],"totalBytes":self.index["recordings"].as_array().unwrap().iter().map(|r|r["bytes"].as_u64().unwrap_or(0)).sum::<u64>(),"freeBytes":free_space(self.config["root"].as_str().unwrap_or("")),"active":self.active,"shares":[],"capture":self.capture_view(),"recorder":self.recorder_view(),"homeAgeMs":if self.home_seen_at == 0 { Value::Null } else { json!(now().saturating_sub(self.home_seen_at)) }})
     }
     fn position(&self, id: &Value) -> Result<usize, String> {
         self.index["recordings"]
@@ -1111,6 +1128,8 @@ fn desktop_args(config: &Path) -> Vec<std::ffi::OsString> {
     vec!["--desktop".into(), "--config".into(), config.into()]
 }
 const NATIVE_POLL_FRESH_MS: u64 = 35000;
+/// How long Home keeps saying the recorder app is opening after a launch, before it is called not responding.
+const RECORDER_OPENING_MS: u64 = 25_000;
 const LAUNCH_DEBOUNCE_MS: u64 = 8000;
 #[derive(Debug, PartialEq, Eq)]
 enum StudioPlan {
@@ -1167,10 +1186,6 @@ struct Human {
 }
 const HUMAN_TTL_MS: u64 = 5000;
 const HUMAN_QUEUE_MAX: usize = 8;
-/// How long a Record press made while the app was not running may wait for the app to start and report. One press, one
-/// start: it is used up when it starts a take, when it expires, or when anything else (a Stop, a Quit, a take already
-/// running) says it no longer applies.
-const PENDING_START_MS: u64 = 20_000;
 /// A control is refused if the app's last report is older than this (it publishes at least every 4 s when idle).
 const HUMAN_REPORT_MAX_AGE_MS: u64 = 12_000;
 /// Browser and host share one clock; this only absorbs rounding.
@@ -1243,8 +1258,6 @@ struct Host {
     human: Mutex<std::collections::VecDeque<Human>>,
     human_seq: std::sync::atomic::AtomicU64,
     human_nonces: Mutex<std::collections::VecDeque<(String, u64)>>,
-    /// A person's Record press made while the app was not running: when it may still start a take, if at all.
-    pending_start: Mutex<Option<u64>>,
     command: Mutex<Option<String>>,
     wake: Condvar,
     origin: String,
@@ -1338,10 +1351,11 @@ impl Host {
         self.wake.notify_one();
         Ok(json!({"queued":true,"id":id,"ttlMs":HUMAN_TTL_MS}))
     }
-    /// The person pressed Record on the library page. If the app is up and reporting this is exactly a Record command
-    /// (and needs the page's launch, take, expiry and number). If it is not, the press starts the app and waits for
-    /// its first idle report, then starts the countdown once: the person pressed once and records once.
-    fn start_recording_with(&self, d: &Value, start_app: impl FnOnce() -> Result<Value, String>) -> Result<Value, String> {
+    /// The person pressed the main control on the library page. If the recorder app is up and reporting this is exactly a Record
+    /// command (and needs the page's launch, take, expiry and number). If it is not, the press is only an Open OpenRecorder:
+    /// the app is opened idle and ready, nothing is queued, and nothing waits for its first report. The person presses Record
+    /// once it is ready. (An older page that still sends this while the app is closed gets the same safe answer.)
+    fn start_recording_with(&self, d: &Value, open_app: impl FnOnce() -> Result<Value, String>) -> Result<Value, String> {
         if self.quitting() {
             return Err(QUIT_MESSAGE.into());
         }
@@ -1371,48 +1385,11 @@ impl Host {
             }
             seen.push_back((nonce, t));
         }
-        *self.pending_start.lock().unwrap() = Some(t + PENDING_START_MS);
-        let opened = match start_app() {
-            Ok(v) => v,
-            Err(e) => {
-                *self.pending_start.lock().unwrap() = None;
-                return Err(e);
-            }
-        };
-        Ok(json!({"queued":false,"starting":true,"ttlMs":PENDING_START_MS,"app":opened}))
-    }
-    /// Called with every report from the app. A waiting press is turned into one Record for the launch that reported,
-    /// made here, now (so it names that launch and take and lives five seconds). Never over a take in progress.
-    fn deliver_pending_start(&self) {
-        let mut pending = self.pending_start.lock().unwrap();
-        let Some(until) = *pending else { return };
-        let t = now();
-        if t > until {
-            *pending = None;
-            return;
-        }
-        let (phase, launch, generation) = {
-            let s = self.store.lock().unwrap();
-            (s.capture["phase"].as_str().unwrap_or("").to_owned(), s.capture["launch"].as_str().map(str::to_owned), s.capture["generation"].as_u64())
-        };
-        match (phase.as_str(), launch, generation) {
-            ("idle", Some(launch), Some(generation)) => {
-                *pending = None;
-                drop(pending);
-                let id = self.human_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                {
-                    let mut queue = self.human.lock().unwrap();
-                    if queue.len() < HUMAN_QUEUE_MAX {
-                        queue.push_back(Human { id, name: "record".into(), payload: json!({"launch":launch,"generation":generation,"nonce":uuid::Uuid::new_v4().to_string(),"expires":t + HUMAN_TTL_MS}), issued_at: t });
-                    }
-                }
-                drop(self.command.lock().unwrap());
-                self.wake.notify_one();
-            }
-            // Anything but a quiet, idle app (a countdown, a take, an app that isn't ready) means this press no longer applies.
-            ("unavailable" | "", ..) => {}
-            _ => *pending = None,
-        }
+        let mut reply = open_app()?;
+        reply["queued"] = json!(false);
+        reply["recording"] = json!(false);
+        reply["message"] = json!("OpenRecorder is opening. Press Record when it is ready.");
+        Ok(reply)
     }
     /// A piece of a library file for a page that cannot reach the address itself (an agent host's panel). Bounded:
     /// at most `MEDIA_CHUNK` bytes, only the fixed set of file names the library serves, only inside a recording folder.
@@ -1448,6 +1425,34 @@ impl Host {
     // MCP operation and no startup flag asks the toolbar to open an input.
     fn open_studio(&self) -> Result<Value, String> {
         self.open_studio_with(process_liveness, launch_desktop)
+    }
+    /// Says in the reply whether the recorder app has already reported. A launch returns at once; whoever asked reads the
+    /// library state's `recorder` to see when it is ready.
+    fn with_recorder(&self, mut reply: Value) -> Value {
+        let view = self.store.lock().unwrap().recorder_view();
+        reply["ready"] = view["ready"].clone();
+        reply["recorder"] = view["state"].clone();
+        reply
+    }
+    /// The person's "Open OpenRecorder" (and the agent's `open-studio`, which is the same passive open): the recorder app is
+    /// running and reporting, and nothing more. It never starts a recording or opens a device, and nothing is left waiting
+    /// for the app's first report: the app that opens stays idle until the person presses Record.
+    fn open_recorder_with(
+        &self,
+        liveness: impl Fn(u32) -> Liveness,
+        launch: impl FnOnce(&Path, bool) -> Result<(), String>,
+    ) -> Result<Value, String> {
+        let reply = self.open_studio_with(liveness, launch)?;
+        Ok(self.with_recorder(reply))
+    }
+    /// The system page for one kind of access, opened by the library itself so the buttons work while the recorder app is not
+    /// running. A person's button only (`UI_OPS`, never `PUBLIC_OPS`): the kind is one of three fixed words and there is no
+    /// free-text target. It opens a page; it never asks for, reads or resets access.
+    fn open_privacy_settings_with(&self, d: &Value, spawn: impl FnOnce(&str, &str) -> Result<(), String>) -> Result<Value, String> {
+        let kind = d["kind"].as_str().ok_or("Invalid privacy page")?;
+        let (program, target) = privacy_target(kind, std::env::consts::OS)?;
+        spawn(program, target).map_err(|e| format!("Could not open the system settings: {e}"))?;
+        Ok(json!({"opened":true,"kind":kind}))
     }
     // The decision and the launch are separate so tests run the clock/liveness cases with a counting launcher.
     fn open_studio_with(
@@ -1628,21 +1633,13 @@ impl Host {
                 Ok(result)
             }
             "capture-command" => {
-                if d["command"] == "cancel" {
-                    *self.pending_start.lock().unwrap() = None;
-                }
                 self.queue_human(&d)
             }
-            "start-recording" => self.start_recording_with(&d, || self.open_studio()),
+            "start-recording" => self.start_recording_with(&d, || self.open_recorder_with(process_liveness, launch_desktop)),
             "media-session" => Ok(json!({"origin":self.origin,"mediaKey":self.media_key,"version":VERSION})),
             "media-read" => self.media_read(&d),
-            "native-progress" => {
-                let reply = self.store.lock().unwrap().action(op, d)?;
-                self.deliver_pending_start();
-                Ok(reply)
-            }
+            "native-progress" => self.store.lock().unwrap().action(op, d),
             "stop" => {
-                *self.pending_start.lock().unwrap() = None;
                 let (result, generation, launch) = {
                     let mut s = self.store.lock().unwrap();
                     let generation = s.capture["generation"].as_u64();
@@ -1693,7 +1690,9 @@ impl Host {
                 open(&format!("{}/#{}{}", self.origin, self.key, route), false)?;
                 Ok(json!({"opened":true}))
             }
-            "open-studio" => self.open_studio(),
+            "open-studio" => self.open_studio().map(|r| self.with_recorder(r)),
+            "open-recorder" => self.open_recorder_with(process_liveness, launch_desktop),
+            "open-privacy-settings" => self.open_privacy_settings_with(&d, |program, target| run_opener(program, target, opener_exit_is_result(program), OPENER_WAIT)),
             _ => self.store.lock().unwrap().action(op, d),
         }
     }
@@ -1714,6 +1713,63 @@ fn library_route(route: &Value) -> Result<&'static str, String> {
             _ => Err("Unknown page".into()),
         },
         _ => Err("Unknown page".into()),
+    }
+}
+/// The system page that holds one access setting. Fixed table: three kinds, per platform; anything else is refused. Linux has
+/// no such page, so there it is an honest error rather than a button that does nothing.
+fn privacy_target(kind: &str, os: &str) -> Result<(&'static str, &'static str), String> {
+    if !["screen", "camera", "mic"].contains(&kind) {
+        return Err("Invalid privacy page".into());
+    }
+    match (os, kind) {
+        ("macos", "screen") => Ok(("/usr/bin/open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")),
+        ("macos", "camera") => Ok(("/usr/bin/open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")),
+        ("macos", _) => Ok(("/usr/bin/open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")),
+        // Microsoft's ms-settings list (learn.microsoft.com/windows/apps/develop/launch/launch-settings-app) names the Privacy page
+        // "Graphics" with ms-settings:privacy-graphicscaptureprogrammatic for screen capture; it is documented there, not tried on
+        // Windows hardware here. The old broadfilesystemaccess URI is the File system page and was the wrong topic.
+        ("windows", "screen") => Ok(("explorer.exe", "ms-settings:privacy-graphicscaptureprogrammatic")),
+        ("windows", "camera") => Ok(("explorer.exe", "ms-settings:privacy-webcam")),
+        ("windows", _) => Ok(("explorer.exe", "ms-settings:privacy-microphone")),
+        _ => Err("This system has no privacy page to open.".into()),
+    }
+}
+/// How long the program that opens a system page may take before it is given up on. `/usr/bin/open` returns as soon as it has
+/// handed the page to the system, so this is generous.
+const OPENER_WAIT: Duration = Duration::from_secs(5);
+/// Only `/usr/bin/open` has an exit status that means something (non-zero when it could not open the target). `explorer.exe`'s
+/// status is not a reliable result for `ms-settings:` pages and is not interpreted; it is unverified on Windows hardware.
+fn opener_exit_is_result(program: &str) -> bool {
+    program == "/usr/bin/open"
+}
+/// Runs the fixed opener program with its one argument and waits, bounded, for it to finish: a program that starts and then
+/// fails is a failure the person sees, not a success. Only this helper process is ever signalled (when it overruns), and it is
+/// always reaped; no other process is touched.
+fn run_opener(program: &str, target: &str, exit_is_result: bool, wait: Duration) -> Result<(), String> {
+    let mut child = Command::new(program).arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() || !exit_is_result {
+                    return Ok(());
+                }
+                let mut said = String::new();
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_string(&mut said);
+                }
+                let said = said.trim();
+                let code = status.code().map_or("a signal".to_owned(), |c| c.to_string());
+                return Err(if said.is_empty() { format!("it exited with {code}") } else { format!("it exited with {code}: {}", said.chars().take(200).collect::<String>()) });
+            }
+            Ok(None) if started.elapsed() >= wait => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("it did not finish in {} seconds", wait.as_secs().max(1)));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(e) => return Err(e.to_string()),
+        }
     }
 }
 fn header(name: &str, value: &str) -> Header {
@@ -1927,7 +1983,6 @@ pub fn start() -> Result<Value, String> {
         human: Mutex::new(std::collections::VecDeque::new()),
         human_seq: std::sync::atomic::AtomicU64::new(0),
         human_nonces: Mutex::new(std::collections::VecDeque::new()),
-        pending_start: Mutex::new(None),
         command: Mutex::new(None),
         wake: Condvar::new(),
         origin: origin.clone(),
@@ -2091,14 +2146,43 @@ fn spawn_host() -> Result<(), String> {
         Ok(())
     }
 }
+/// The descriptor of a host that answered, with what this program learned about it from its own `state` answer (the preview.11
+/// descriptor has no version). This is read-only awareness: an ordinary session NEVER replaces, quits or otherwise touches a library
+/// it finds, whatever its version or state. A library that is not this version is simply described, and the page operations it
+/// lacks are refused in plain words. Moving the owner's library to a new version is a separate, deliberate, quiet-window operator
+/// step (a normal Quit by the owner after `scripts/handoff-precheck.py` says the library is idle), never something a plugin
+/// session, Home, an agent or a UI control does by itself.
+fn describe_backend(c: &Value, state: &Value) -> Value {
+    let version = state["version"].as_str().unwrap_or("unknown");
+    let mut described = c.clone();
+    described["backend"] = json!({
+        "version": version,
+        "current": version == VERSION,
+        // Feature detection, not version arithmetic: a library has the new page operations when its state carries a `recorder` block.
+        "pageOps": state["recorder"].is_object(),
+        "handoff": "none",
+        "reason": if version == VERSION { Value::Null } else { json!("an ordinary session never replaces a running library") },
+    });
+    described
+}
+/// The page operations that only a library with a `recorder` block has. Asked of any other library they are refused here in plain
+/// words rather than passed on to fail as "Unsupported operation".
+const NEW_PAGE_OPS: &[&str] = &["open-recorder", "open-privacy-settings"];
+fn older_library_refusal(c: &Value, op: &str) -> Option<String> {
+    if !NEW_PAGE_OPS.contains(&op) || c["backend"]["pageOps"] != false {
+        return None;
+    }
+    let version = c["backend"]["version"].as_str().unwrap_or("an unknown version");
+    Some(format!("The OpenRecorder library that is running is {version}, which does not have this yet. A running library is never replaced by ordinary use; it is updated in a quiet moment by whoever manages this installation. Until then, open the recorder from the menu bar or Applications."))
+}
 /// Adopt the live library host, starting one only when none answers. Concurrent callers converge on one
 /// host: the host's own start lock admits a single winner, and callers never spawn while one is starting.
 fn ensure_host() -> Result<Value, String> {
     reap_starters();
     let published = descriptor();
     if let Some(c) = &published {
-        if request(c, "state", json!({})).is_ok() {
-            return Ok(c.clone());
+        if let Ok(state) = request(c, "state", json!({})) {
+            return Ok(describe_backend(c, &state));
         }
     }
     let home = home();
@@ -2114,8 +2198,8 @@ fn ensure_host() -> Result<Value, String> {
         std::thread::sleep(Duration::from_millis(100));
         reap_starters();
         if let Some(c) = descriptor() {
-            if request(&c, "state", json!({})).is_ok() {
-                return Ok(c);
+            if let Ok(state) = request(&c, "state", json!({})) {
+                return Ok(describe_backend(&c, &state));
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -2318,8 +2402,11 @@ impl Bridge {
                     // Model-visible output never carries the owner key. The browser fallback is the `open-library`
                     // operation, which the host performs itself.
                     "openrecorder_home" => self.with_host(|c| {
-                        request_raw(c, "state", json!({})).map(|mut v| {
+                        request_raw(c, "state", json!({})).and_then(|v| if v.is_object() { Ok(v) } else { Err(HostError::Failed("The running library gave an answer OpenRecorder cannot read.".into())) }).map(|mut v| {
                             v["origin"] = json!(c["origin"].as_str().unwrap_or(""));
+                            if !c["backend"].is_null() {
+                                v["backend"] = c["backend"].clone();
+                            }
                             v["browser"] = json!("Call openrecorder_action with op open-library to open the private library in the browser. No access link is returned.");
                             v
                         })
@@ -2334,7 +2421,10 @@ impl Bridge {
                         } else if !(data.is_null() || data.is_object()) {
                             Err("data must be an object".into())
                         } else {
-                            self.with_host(|c| request_raw(c, op, data.clone()))
+                            self.with_host(|c| match older_library_refusal(c, op) {
+                                Some(message) => Err(HostError::Rejected(message)),
+                                None => request_raw(c, op, data.clone()),
+                            })
                         }
                     }
                     "openrecorder_action" => {
@@ -2481,8 +2571,7 @@ mod tests {
             human: Mutex::new(std::collections::VecDeque::new()),
             human_seq: std::sync::atomic::AtomicU64::new(0),
             human_nonces: Mutex::new(std::collections::VecDeque::new()),
-            pending_start: Mutex::new(None),
-            command: Mutex::new(None),
+                command: Mutex::new(None),
             wake: Condvar::new(),
             origin: "http://127.0.0.1:1".into(),
             key: "k".repeat(64),
@@ -3513,7 +3602,7 @@ mod tests {
     #[test]
     fn reported_version_matches_the_package_version() {
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
-        assert_eq!(VERSION, "0.6.0-preview.11");
+        assert_eq!(VERSION, "0.6.0-preview.12");
     }
 
     // ---- identity, the page-only tool, media and the one-press start (controlled fixtures only; nothing is recorded) ----
@@ -3699,71 +3788,61 @@ mod tests {
         old_take["generation"] = json!(3);
         assert!(host.action("start-recording", old_take).is_err());
         assert_eq!(host.human.lock().unwrap().len(), 1);
-        assert!(host.pending_start.lock().unwrap().is_none(), "a live app has nothing pending");
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
-    fn a_press_while_the_app_is_not_running_waits_briefly_and_starts_one_countdown_when_the_app_reports_idle() {
+    fn the_main_control_pressed_while_the_app_is_not_ready_only_opens_it_and_a_delayed_report_never_starts_a_take() {
         let (host, home) = test_host();
-        let launched = std::cell::Cell::new(0);
-        let start = || { launched.set(launched.get() + 1); Ok(json!({"launched":true})) };
-        // No envelope, an expired one and an over-long one are refused and start nothing.
-        assert!(host.start_recording_with(&json!({}), start).is_err());
-        assert!(host.start_recording_with(&json!({"nonce":"press-1000","expires":now().saturating_sub(1)}), start).is_err());
-        assert!(host.start_recording_with(&json!({"nonce":"press-1001","expires":now() + 60_000}), start).is_err());
-        assert_eq!(launched.get(), 0);
-        let r = host.start_recording_with(&envelope("press-1002"), start).unwrap();
-        assert_eq!((r["queued"].as_bool(), r["starting"].as_bool(), launched.get()), (Some(false), Some(true), 1));
-        assert!(host.start_recording_with(&envelope("press-1002"), start).unwrap_err().contains("already used"), "a replay does not launch twice");
-        assert_eq!(launched.get(), 1);
-        // The app comes up and reports idle: exactly one Record, made here, bound to that launch and take.
+        let opened = std::cell::Cell::new(0);
+        let open = || { opened.set(opened.get() + 1); Ok(json!({"opened":true})) };
+        // No envelope, an expired one and an over-long one are refused and open nothing.
+        assert!(host.start_recording_with(&json!({}), open).is_err());
+        assert!(host.start_recording_with(&json!({"nonce":"press-1000","expires":now().saturating_sub(1)}), open).is_err());
+        assert!(host.start_recording_with(&json!({"nonce":"press-1001","expires":now() + 60_000}), open).is_err());
+        assert_eq!(opened.get(), 0);
+        let r = host.start_recording_with(&envelope("press-1002"), open).unwrap();
+        assert_eq!((r["queued"].as_bool(), r["recording"].as_bool(), opened.get()), (Some(false), Some(false), 1));
+        assert!(r["message"].as_str().unwrap().contains("Press Record when it is ready"), "the person is told what happens next");
+        assert!(host.start_recording_with(&envelope("press-1002"), open).unwrap_err().contains("already used"), "a replay does not open twice");
+        assert_eq!(opened.get(), 1);
+        // The app comes up, reports not-ready and then idle, again and again, within the old twenty seconds and after: nothing is
+        // ever queued for it. Only a Record pressed once it is ready starts a take.
         host.action("native-window-ready", json!({"pid":std::process::id()})).unwrap();
-        host.action("native-progress", progress("unavailable", 0)).unwrap();
-        assert!(host.human.lock().unwrap().is_empty() && host.pending_start.lock().unwrap().is_some(), "an app that is not ready yet keeps waiting");
-        host.action("native-progress", progress("idle", 2)).unwrap();
-        {
-            let queue = host.human.lock().unwrap();
-            assert_eq!(queue.len(), 1);
-            let p = &queue[0].payload;
-            assert_eq!((queue[0].name.as_str(), p["launch"].as_str(), p["generation"].as_u64()), ("record", Some(LAUNCH), Some(2)));
-            assert!(p["nonce"].as_str().unwrap().len() >= 8 && p["expires"].as_u64().unwrap() <= now() + HUMAN_TTL_MS);
+        for (phase, generation) in [("unavailable", 0), ("idle", 2), ("idle", 2), ("idle", 3)] {
+            host.action("native-progress", progress(phase, generation)).unwrap();
+            assert!(host.human.lock().unwrap().is_empty(), "{phase}: a delayed report starts nothing");
         }
-        host.action("native-progress", progress("idle", 2)).unwrap();
-        assert_eq!(host.human.lock().unwrap().len(), 1, "delivered once, never again");
-        assert!(host.pending_start.lock().unwrap().is_none());
+        assert_eq!(host.action("state", json!({})).unwrap()["capture"]["phase"], "idle");
+        // Now it is ready: the same control is a Record, bound to this launch and take, exactly as before.
+        let mut press = envelope("press-1003");
+        press["launch"] = json!(LAUNCH);
+        press["generation"] = json!(3);
+        assert_eq!(host.start_recording_with(&press, open).unwrap()["queued"], true);
+        assert_eq!((host.human.lock().unwrap().len(), opened.get()), (1, 1), "a ready app is recorded by the press, not opened again");
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
-    fn a_waiting_press_never_starts_over_a_take_and_cancel_stop_expiry_and_quit_all_clear_it() {
-        for (clearing, phase) in [("recording", true), ("countdown", true), ("saving", true)] {
+    fn a_legacy_cold_start_recording_never_queues_a_future_take_whatever_happens_to_the_app_or_the_press() {
+        // A take over which a Record would be refused, an app that reports late, a failed open and a quitting library.
+        for phase in ["recording", "countdown", "saving"] {
             let (host, home) = test_host();
             host.start_recording_with(&envelope("press-2000"), || Ok(json!({}))).unwrap();
             host.action("native-window-ready", json!({"pid":std::process::id()})).unwrap();
-            host.action("native-progress", progress(clearing, 5)).unwrap();
-            assert!(phase && host.human.lock().unwrap().is_empty(), "{clearing}: no Record is made over a take");
-            assert!(host.pending_start.lock().unwrap().is_none(), "{clearing}: the press no longer applies");
+            host.action("native-progress", progress(phase, 5)).unwrap();
+            assert!(host.human.lock().unwrap().is_empty(), "{phase}: nothing is made over, or after, a take");
             fs::remove_dir_all(home).unwrap();
         }
-        // Expired by the clock: the report that arrives afterwards finds nothing to deliver.
         let (host, home) = test_host();
-        host.start_recording_with(&envelope("press-2001"), || Ok(json!({}))).unwrap();
-        *host.pending_start.lock().unwrap() = Some(now().saturating_sub(1));
+        assert!(host.start_recording_with(&envelope("press-2005"), || Err("no app".into())).is_err(), "a failed open is an error the person sees");
         ready_app(&host, "idle", 1);
-        assert!(host.human.lock().unwrap().is_empty() && host.pending_start.lock().unwrap().is_none());
-        host.action("native-window-closed", json!({})).unwrap();
-        // A person's Cancel clears it, and so does Stop.
-        host.start_recording_with(&envelope("press-2002"), || Ok(json!({}))).unwrap();
-        let _ = host.action("capture-command", control(json!({"command":"cancel"}), Some(1), "press-2003"));
-        assert!(host.pending_start.lock().unwrap().is_none(), "Cancel clears a waiting press");
-        host.start_recording_with(&envelope("press-2004"), || Ok(json!({}))).unwrap();
-        let _ = host.action("stop", json!({}));
-        assert!(host.pending_start.lock().unwrap().is_none(), "Stop clears a waiting press");
-        // A launch that fails leaves nothing waiting; a quitting library takes no press.
-        assert!(host.start_recording_with(&envelope("press-2005"), || Err("no app".into())).is_err());
-        assert!(host.pending_start.lock().unwrap().is_none());
+        assert!(host.human.lock().unwrap().is_empty(), "and leaves nothing to start when the app does come up");
         host.quit_requested.store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(host.start_recording_with(&envelope("press-2006"), || Ok(json!({}))).is_err());
-        assert!(host.pending_start.lock().unwrap().is_none());
+        assert!(host.human.lock().unwrap().is_empty());
+        // Source check: the mechanism that used to carry a press across the app's start is gone, not merely unused.
+        let source = include_str!("library_host.rs");
+        let marker = ["pending", "_start"].concat();
+        assert_eq!(source.matches(marker.as_str()).count(), 0, "nothing in the host names it any more");
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
@@ -3879,4 +3958,251 @@ mod tests {
         fs::remove_dir_all(home).unwrap();
     }
 
+    // ---- Plugin-only lifecycle (preview.12): the recorder app opens ready without recording; permission pages open without it ----
+    #[test]
+    fn home_says_where_the_recorder_app_stands_and_never_guesses_at_permissions() {
+        let (host, home) = test_host();
+        let view = |host: &Host| host.action("state", json!({})).unwrap()["recorder"].clone();
+        let cold = view(&host);
+        assert_eq!((cold["state"].as_str(), cold["ready"].as_bool(), cold["opening"].as_bool()), (Some("not-running"), Some(false), Some(false)));
+        assert_eq!(host.action("state", json!({})).unwrap()["capture"]["known"], false, "no report, no capture facts");
+        // A launch is in flight: opening, until it reports or the window runs out.
+        host.store.lock().unwrap().launched_at = now();
+        assert_eq!(view(&host)["state"], "opening");
+        host.store.lock().unwrap().launched_at = now().saturating_sub(RECORDER_OPENING_MS + 1);
+        assert_eq!(view(&host)["state"], "not-running", "a launch that never reported stops claiming to open");
+        // It registered but has not reported yet.
+        host.action("native-window-ready", json!({"pid":std::process::id()})).unwrap();
+        assert_eq!(view(&host)["state"], "not-responding");
+        host.action("native-progress", progress("idle", 1)).unwrap();
+        let ready = view(&host);
+        assert_eq!((ready["state"].as_str(), ready["ready"].as_bool()), (Some("ready"), Some(true)));
+        // Its report goes stale: not responding, never "ready" on old news.
+        host.store.lock().unwrap().capture_at = now().saturating_sub(HUMAN_REPORT_MAX_AGE_MS + 1);
+        assert_eq!(view(&host)["state"], "not-responding");
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn new_recording_opens_the_recorder_app_ready_and_never_records_or_carries_a_press() {
+        use std::cell::Cell;
+        let (host, home) = test_host();
+        let launches = Cell::new(0);
+        let launcher = |_: &Path, _: bool| { launches.set(launches.get() + 1); Ok(()) };
+        let r = host.open_recorder_with(|_| Liveness::Gone, launcher).unwrap();
+        assert_eq!((launches.get(), r["opened"].as_bool(), r["ready"].as_bool(), r["recorder"].as_str()), (1, Some(true), Some(false), Some("opening")));
+        // The app comes up and reports idle: nothing is queued for it, so it stays idle until the person records.
+        host.action("native-window-ready", json!({"pid":std::process::id()})).unwrap();
+        host.action("native-progress", progress("idle", 1)).unwrap();
+        assert!(host.human.lock().unwrap().is_empty(), "no Record, no input, nothing queued");
+        assert_eq!(host.action("state", json!({})).unwrap()["capture"]["phase"], "idle");
+        // Opening again while it is up shows it; it never starts a second copy.
+        host.post_command("show");
+        host.action("native-command", json!({"pid":std::process::id()})).unwrap();
+        let again = host.open_recorder_with(|_| Liveness::Alive, launcher).unwrap();
+        assert_eq!((launches.get(), again["opened"].as_bool(), again["ready"].as_bool(), again["recorder"].as_str()), (1, Some(true), Some(true), Some("ready")));
+        assert!(host.human.lock().unwrap().is_empty());
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn opening_the_recorder_app_copes_with_a_launch_in_flight_a_busy_app_and_a_failed_launch() {
+        use std::cell::Cell;
+        let (host, home) = test_host();
+        let launches = Cell::new(0);
+        let launcher = |_: &Path, _: bool| { launches.set(launches.get() + 1); Ok(()) };
+        // Two presses close together: one launch; the second says it is opening.
+        host.open_recorder_with(|_| Liveness::Gone, launcher).unwrap();
+        let second = host.open_recorder_with(|_| Liveness::Gone, launcher).unwrap();
+        assert_eq!((launches.get(), second["opening"].as_bool()), (1, Some(true)));
+        // A registered app that is quiet but not confirmed gone is never replaced: busy, nothing launched.
+        host.action("native-window-ready", json!({"pid":std::process::id()})).unwrap();
+        host.store.lock().unwrap().last_poll = now().saturating_sub(NATIVE_POLL_FRESH_MS + 1);
+        for liveness in [Liveness::Alive, Liveness::Unknown] {
+            let busy = host.open_recorder_with(move |_| liveness, launcher).unwrap();
+            assert_eq!((launches.get(), busy["busy"].as_bool(), busy["ready"].as_bool()), (1, Some(true), Some(false)), "{liveness:?}");
+        }
+        // A take whose owner is not known blocks a launch too.
+        {
+            let mut s = host.store.lock().unwrap();
+            s.pid = None;
+            s.active = json!({"id":"take","status":"recording"});
+            s.take_owner = None;
+        }
+        let blocked = host.open_recorder_with(|_| Liveness::Gone, launcher).unwrap();
+        assert_eq!((launches.get(), blocked["busy"].as_bool()), (1, Some(true)), "an active take is never stolen by a launch");
+        host.store.lock().unwrap().active = Value::Null;
+        // A launch that fails is an error the person sees, and it does not hold the launch window closed.
+        host.store.lock().unwrap().launched_at = 0;
+        let failed = host.open_recorder_with(|_| Liveness::Gone, |_: &Path, _: bool| Err("Could not prepare the recorder update".into()));
+        assert_eq!(failed.unwrap_err(), "Could not prepare the recorder update");
+        assert_eq!(host.store.lock().unwrap().launched_at, 0);
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn a_passive_home_and_an_agent_never_open_the_app_by_themselves_and_the_new_operations_are_the_persons_only() {
+        let (host, home) = test_host();
+        // Reading the library (what openrecorder_home does) starts nothing native and changes no recorder fact.
+        host.action("state", json!({})).unwrap();
+        assert!(host.store.lock().unwrap().pid.is_none() && host.store.lock().unwrap().launched_at == 0);
+        for op in ["open-recorder", "open-privacy-settings"] {
+            assert!(UI_OPS.contains(&op) && !PUBLIC_OPS.contains(&op), "{op} belongs to the page, not to an agent");
+            let list = tools_list();
+            let action = list["tools"].as_array().unwrap().iter().find(|t| t["name"] == "openrecorder_action").unwrap();
+            assert!(!action["inputSchema"]["properties"]["op"]["enum"].to_string().contains(op), "{op} is not in the model-visible tool");
+        }
+        // Through the model's own tool both are refused before anything is contacted.
+        let mut bridge = Bridge::default();
+        for op in ["open-recorder", "open-privacy-settings"] {
+            let r = bridge.handle_line(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openrecorder_action","arguments":{"op":op,"data":{"kind":"screen"}}}}).to_string().as_bytes()).unwrap();
+            assert_eq!(r["result"]["isError"], true, "{op}");
+            let r = bridge.handle_line(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"openrecorder_ui","arguments":{"op":op,"data":{"kind":"screen"},"ui":"guess"}}}).to_string().as_bytes()).unwrap();
+            assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("belongs to the OpenRecorder window"), "{op}: {r}");
+        }
+        assert!(bridge.conn.is_none(), "no library was started by a refused call");
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn the_permission_buttons_open_the_right_system_page_without_the_app_and_nothing_else() {
+        let table = [("macos", "screen", "Privacy_ScreenCapture"), ("macos", "camera", "Privacy_Camera"), ("macos", "mic", "Privacy_Microphone"),
+                     ("windows", "screen", "privacy-graphicscaptureprogrammatic"), ("windows", "camera", "privacy-webcam"), ("windows", "mic", "privacy-microphone")];
+        for (os, kind, tail) in table {
+            let (program, target) = privacy_target(kind, os).unwrap();
+            assert!(target.ends_with(tail), "{os} {kind}: {target}");
+            assert_eq!(program, if os == "macos" { "/usr/bin/open" } else { "explorer.exe" });
+        }
+        for kind in ["screen", "camera", "mic"] {
+            assert!(privacy_target(kind, "linux").unwrap_err().contains("no privacy page"), "Linux has none, and says so");
+        }
+        for kind in ["", "microphone", "Screen", "screen; rm", "https://example.com", "../x", "file:///etc/hosts"] {
+            assert!(privacy_target(kind, "macos").is_err() && privacy_target(kind, "windows").is_err(), "{kind:?}");
+        }
+        // The host runs exactly that program with exactly that one argument, reports success, and shows a failure.
+        let (host, home) = test_host();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let expected = privacy_target("camera", std::env::consts::OS);
+        let reply = host.open_privacy_settings_with(&json!({"kind":"camera"}), |p, t| { seen.borrow_mut().push((p.to_owned(), t.to_owned())); Ok(()) });
+        match expected {
+            Ok((p, t)) => {
+                assert_eq!(reply.unwrap()["opened"], true);
+                assert_eq!(*seen.borrow(), vec![(p.to_owned(), t.to_owned())]);
+            }
+            Err(e) => assert_eq!((reply.unwrap_err(), seen.borrow().len()), (e, 0), "an unsupported system spawns nothing"),
+        }
+        for bad in [json!({}), json!({"kind":null}), json!({"kind":"url"}), json!({"kind":["screen"]})] {
+            let seen = std::cell::Cell::new(0);
+            assert!(host.open_privacy_settings_with(&bad, |_, _| { seen.set(1); Ok(()) }).is_err(), "{bad}");
+            assert_eq!(seen.get(), 0, "{bad}: nothing is spawned for a refused request");
+        }
+        if privacy_target("screen", std::env::consts::OS).is_ok() {
+            let failed = host.open_privacy_settings_with(&json!({"kind":"screen"}), |_, _| Err("no such program".into())).unwrap_err();
+            assert!(failed.contains("Could not open the system settings") && failed.contains("no such program"), "{failed}");
+        }
+        // It reads or changes no access: the host holds no grant state at all.
+        assert!(host.store.lock().unwrap().capture.is_null());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    // ---- Preview.12 review fixes: read-only version awareness (no Quit from ordinary use), honest opener results ----
+    fn state_of(version: Value, extra: Value) -> Value {
+        let mut v = json!({"active":null,"shares":[],"capture":{"phase":"unavailable","generation":0,"known":false}});
+        if !version.is_null() {
+            v["version"] = version;
+        }
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        v
+    }
+    #[test]
+    fn an_ordinary_session_only_describes_a_running_library_whatever_its_version_or_state() {
+        let descriptor = json!({"pid":6912,"origin":"http://127.0.0.1:5","key":"k".repeat(64)});
+        // The version comes from the owner's own answer; the descriptor of preview.11 has none and is returned untouched.
+        let current = describe_backend(&descriptor, &state_of(json!(VERSION), json!({"recorder":{"state":"not-running","ready":false}})));
+        assert_eq!((current["backend"]["current"].as_bool(), current["backend"]["pageOps"].as_bool(), current["backend"]["handoff"].as_str()), (Some(true), Some(true), Some("none")));
+        for (version, extra) in [(json!("0.6.0-preview.11"), json!({})), (json!("garbage1"), json!({})), (json!("0.7.0"), json!({})), (json!(""), json!({})), (json!(12), json!({})), (Value::Null, json!({})),
+                                 (json!("0.6.0-preview.11"), json!({"active":{"status":"recording"}})), (json!("0.6.0-preview.11"), json!({"shares":[{"status":"ready"}]}))] {
+            let d = describe_backend(&descriptor, &state_of(version.clone(), extra));
+            assert_eq!((d["backend"]["current"].as_bool(), d["backend"]["handoff"].as_str()), (Some(false), Some("none")), "{version}: never current, and never a handoff");
+            assert_eq!(d["pid"], 6912, "the connection fields are untouched");
+            assert!(d["backend"]["reason"].as_str().unwrap().contains("never replaces"), "{version}");
+        }
+        // Page operations are judged by what the library has (a `recorder` block), not by comparing versions.
+        let lacking = describe_backend(&descriptor, &state_of(json!("0.6.0-preview.11"), json!({})));
+        assert_eq!(lacking["backend"]["pageOps"], false);
+        for op in NEW_PAGE_OPS {
+            let message = older_library_refusal(&lacking, op).expect(op);
+            assert!(message.contains("0.6.0-preview.11") && message.contains("never replaced by ordinary use"), "{message}");
+        }
+        for op in ["media-read", "media-session", "capture-command", "start-recording", "state", "open-studio"] {
+            assert!(older_library_refusal(&lacking, op).is_none(), "{op} exists in the older library and is passed on");
+        }
+        assert!(older_library_refusal(&current, "open-recorder").is_none());
+        for bad in [json!(null), json!("yes"), json!([]), json!(1)] {
+            let odd = describe_backend(&descriptor, &state_of(json!("0.6.0-preview.11"), json!({"recorder":bad.clone()})));
+            assert_eq!(odd["backend"]["pageOps"], false, "a malformed recorder block is not a capability: {bad}");
+        }
+        assert!(NEW_PAGE_OPS.iter().all(|op| UI_OPS.contains(op)) && NEW_PAGE_OPS.len() == 2);
+        // The source of everything that talks to an owner has no outbound Quit: nothing in ordinary startup, Home, a UI control or an
+        // agent call can send one. (The host's own `quit` handler and the PUBLIC_OPS list are the only places the word appears.)
+        let source = include_str!("library_host.rs");
+        let runtime = &source[..source.find("#[cfg(test)]").unwrap()];
+        let outbound = ["\"quit\"", ", json!"].concat();
+        assert_eq!(runtime.matches(outbound.as_str()).count(), 0, "no code sends a Quit to a running library");
+        for needle in ["fn replace_older_library", "fn handoff_blocker", "fn version_numbers", "fn settle_owner"] {
+            assert!(!runtime.contains(needle), "{needle} no longer exists");
+        }
+    }
+    #[cfg(unix)]
+    fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+    #[test]
+    #[cfg(unix)]
+    fn an_opener_that_starts_and_then_fails_or_overruns_is_a_visible_failure_and_only_that_helper_is_ever_signalled() {
+        // A script that was only just written can be "text file busy" when another test thread forks while its descriptor is open; that
+        // is the test's race, not the opener's, so it is retried here.
+        let opener = |program: &str, target: &str, exit_is_result: bool, wait: Duration| {
+            for _ in 0..40 {
+                match run_opener(program, target, exit_is_result, wait) {
+                    Err(e) if e.contains("Text file busy") => std::thread::sleep(Duration::from_millis(50)),
+                    other => return other,
+                }
+            }
+            run_opener(program, target, exit_is_result, wait)
+        };
+        let dir = std::env::temp_dir().join(format!("recorder-opener-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let wait = Duration::from_secs(10);   // generous: a loaded machine must not turn a quick script into a timeout
+        let ok = script(&dir, "ok", "exit 0");
+        assert!(opener(ok.to_str().unwrap(), "x", true, wait).is_ok());
+        // Spawns fine, then fails: the exit status and what it said reach the person.
+        let failing = script(&dir, "failing", "echo 'The application cannot open the URI' >&2; exit 3");
+        let error = opener(failing.to_str().unwrap(), "x", true, wait).unwrap_err();
+        assert!(error.contains("exited with 3") && error.contains("cannot open the URI"), "{error}");
+        let silent = script(&dir, "silent", "exit 7");
+        assert_eq!(opener(silent.to_str().unwrap(), "x", true, wait).unwrap_err(), "it exited with 7");
+        // A program whose status is not a result (explorer.exe) is not judged by it.
+        assert!(opener(failing.to_str().unwrap(), "x", false, wait).is_ok());
+        assert!(opener_exit_is_result("/usr/bin/open") && !opener_exit_is_result("explorer.exe"));
+        assert!(opener(dir.join("missing").to_str().unwrap(), "x", true, wait).is_err(), "a program that cannot start is an error");
+        // One that overruns is given up on within the bound; only that helper is killed, and it is gone afterwards.
+        let slow = script(&dir, "slow", &format!("echo $$ > {}\nexec sleep 30", dir.join("pid").display()));
+        let began = std::time::Instant::now();
+        let error = opener(slow.to_str().unwrap(), "x", true, Duration::from_millis(1500)).unwrap_err();
+        assert!(error.contains("did not finish") && began.elapsed() < Duration::from_secs(8), "{error} after {:?}", began.elapsed());
+        let pid = fs::read_to_string(dir.join("pid")).unwrap().trim().to_owned();
+        assert!(!Command::new("/bin/kill").args(["-0", &pid]).stderr(Stdio::null()).status().unwrap().success(), "the overrunning helper was reaped");
+        // End to end through the page operation: the failure is what Home is told.
+        let (host, home) = test_host();
+        let shown = host.open_privacy_settings_with(&json!({"kind":"camera"}), |_, _| opener(failing.to_str().unwrap(), "x", true, wait));
+        if privacy_target("camera", std::env::consts::OS).is_ok() {
+            let message = shown.unwrap_err();
+            assert!(message.contains("Could not open the system settings") && message.contains("exited with 3"), "{message}");
+        }
+        fs::remove_dir_all(home).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

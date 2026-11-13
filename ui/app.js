@@ -96,7 +96,9 @@ const activeShape=shape({status:isStr},{id:isStr,startedAt:isNumber,countdownRem
 // previous New recording button. Only well-typed content is accepted, so a malformed report can never invent a timer.
 const captureShape=shape({phase:isStr,generation:isNumber},{known:isBool,stale:isBool,ageMs:isNumber,elapsedMs:isNumber,fpsSet:isNumber,fpsDelivered:isNumber,sourceFps:isNumber,outputFrames:isNumber,sourceFrames:isNumber,countdown:isNumber,trayAvailable:isBool,trayNote:isStr,screenAllowed:isBool,screenState:isStr,appearance:shape({shape:isStr,size:isNumber,mirror:isBool,showCamera:isBool}),inputs:isObj,source:isObj,sources:arrayOf(isObj),devices:isObj,notice:isObj,capabilities:isObj});
 const shareShape=shape({id:isStr,status:isStr},{shareId:isStr,url:isStr,accessCode:isStr,expiresAt:isNumber,never:isBool,error:nullable(isStr),unlockedSessions:isNumber,rateLimited:isBool});
-const stateShape=shape({recordings:arrayOf(recordingShape),folders:arrayOf(folderShape),settings:settingsShape,root:isStr,active:nullable(activeShape),shares:arrayOf(shareShape)},{freeBytes:nullable(isNumber),totalBytes:isNumber,version:isStr,platform:isStr,capture:captureShape});
+// Where the recorder app (the native menu-bar or tray program) stands. Optional: an older host sends none, and Home then reads it from capture.
+const recorderShape=shape({state:isStr,ready:isBool},{opening:isBool,settingsPages:isBool});
+const stateShape=shape({recordings:arrayOf(recordingShape),folders:arrayOf(folderShape),settings:settingsShape,root:isStr,active:nullable(activeShape),shares:arrayOf(shareShape)},{freeBytes:nullable(isNumber),totalBytes:isNumber,version:isStr,platform:isStr,capture:captureShape,recorder:recorderShape});
 const validState=stateShape;
 const incompleteState=()=>Object.assign(new Error('OpenRecorder sent an incomplete library.'),{unreachable:true});
 // The one place the library state is assigned. `keepShares` is for pushes whose share list is not authoritative.
@@ -215,7 +217,7 @@ function render(){
   if(!settingsSaving&&(state.settings.theme||'system')!==appliedTheme)applyTheme(state.settings.theme||'system');
   if(view.startsWith('folder:')&&!folderName(view.slice(7)))view='all';
   if(selectedId&&!state.recordings.some(r=>r.id===selectedId))closeRecording();
-  renderNav();renderActive();renderCapture();
+  renderNav();renderActive();renderCapture();renderRecorder();
   const inRecording=!!selectedId;
   $('libraryView').hidden=inRecording;$('recordingView').hidden=!inRecording;$('topbar').dataset.page=inRecording?'recording':'library';
   if(inRecording)renderRecording();else renderGrid();
@@ -528,9 +530,18 @@ $('copyShare').onclick=()=>{const link=bestShare(sharing.id);if(!link||shareStat
 $('copyCode').onclick=()=>{const link=bestShare(sharing.id);if(!link||shareState(link)!=='ready'){renderShare();return;}void copyText(formatCode(shareCode(link)),'Code copied',()=>selectContents($('shareCode')));};
 // The invitation: a short message with the link and the code together, built from what the host reports for this share. It
 // is only ever copied (or shown to be selected); nothing is sent, and no part of it is logged.
+// It is plain text in Danish for mail and chat (nothing depends on Markdown or rich text): the opening lines, then one line for the
+// recipient, then when the access ends. The link and the code each stand on their own line with nothing around them. The access
+// ending (link and code) is said apart from the link being reachable at all, which depends on this computer and the sharing staying
+// on: "no end time" never reads as permanent hosting. A browser is all the recipient needs.
+function danishWhen(ms){const d=new Date(ms);return `${d.toLocaleDateString('da-DK',{day:'numeric',month:'long'})} kl. ${d.toLocaleTimeString('da-DK',{hour:'2-digit',minute:'2-digit',hour12:false})}`;}
+const plainCode=link=>formatCode(shareCode(link)).replace(/["'“”„‘’`]/g,'').replace(/[\s.,;:!?)\]]+$/,'');
 function inviteText(link){
-  const end=isNum(link.expiresAt)?`The link works until ${clock(link.expiresAt)}.`:link.never===true?'The link has no end time; it works while I keep OpenRecorder open.':'';
-  return ['I’m sharing a recording with you.','',`Link: ${shareLink(link)}`,`Access code: ${formatCode(shareCode(link))}`,...(end?['',end]:[])].join('\n');
+  const hosting='Linket virker kun, så længe min computer og delingen er tændt og online';
+  const end=isNum(link.expiresAt)?`Linket og adgangskoden udløber ${danishWhen(link.expiresAt)}. Derudover virker linket kun, så længe min computer og delingen er tændt og online, så det kan også stoppe før.`
+    :link.never===true?'Linket har ingen udløbstid, men det ligger ikke permanent online. Det virker kun, så længe min computer og delingen er tændt og online, og jeg kan stoppe det når som helst.'
+    :`${hosting}.`;
+  return ['Se min optagelse:','',shareLink(link),'','Adgangskode:',plainCode(link),'','Åbn linket i din browser og skriv adgangskoden. Du behøver ikke installere noget.','',end].join('\n');
 }
 $('copyInvite').onclick=async()=>{
   const dialog=sharing,link=bestShare(dialog.id);if(!link||shareState(link)!=='ready'){renderShare();return;}
@@ -584,14 +595,34 @@ function sharingPane(){
 // Permissions: what the app reports, in words, and a human button per grant. Nothing here asks for or resets access.
 function permissionRows(){
   const cap=state.capture,known=captureKnown();
-  const screen=!known?'Not reported yet':{allowed:'Allowed','not-asked':'Not asked yet. macOS asks when you first record.',denied:'Off for OpenRecorder'}[cap.screenState]||'Not reported yet';
-  const input=kind=>{const m=markOf(cap||{},kind);return !known?'Not reported yet':m==='access-off'?'Off in System Settings':m==='live'?'Allowed. Live now.':'No problem reported';};
+  const screen=!known?'Unknown until OpenRecorder is open':{allowed:'Allowed','not-asked':'Not asked yet. macOS asks when you first record.',denied:'Off for OpenRecorder'}[cap.screenState]||'Not reported yet';
+  const input=kind=>{const m=markOf(cap||{},kind);return !known?'Unknown until OpenRecorder is open':m==='access-off'?'Off in System Settings':m==='live'?'Allowed. Live now.':'No problem reported';};
   return [['screen','Screen Recording',screen,known&&cap.screenState==='denied'],['camera','Camera',input('camera'),known&&markOf(cap,'camera')==='access-off'],['mic','Microphone',input('microphone'),known&&markOf(cap,'microphone')==='access-off']];
+}
+// The words for the Permissions pane that depend on the recorder app's readiness, in one place so the pane is built and patched from the
+// same rules. The pane has nothing to edit, so it is never rebuilt while it is open: its text is patched in place (renderSettingsLive),
+// which keeps a focused button focused and lets the pane follow unknown -> opening -> ready (or not responding, timed out, refused) by itself.
+function permissionsWords(){
+  const view=recorderView(),known=captureKnown();
+  const live=known?['camera','microphone'].filter(k=>markOf(state.capture,k)==='live'):[];
+  const why={opening:'Opening OpenRecorder…','not-responding':'OpenRecorder isn’t responding.',timeout:'OpenRecorder didn’t report in time.',failed:view.text||'OpenRecorder didn’t open.'}[view.state]||'';
+  const button={opening:'Opening…','not-responding':'Try again',timeout:'Try again',failed:'Try again'}[view.state]||'Open OpenRecorder';
+  return {cold:!known,why,button,opening:view.state==='opening',
+    note:`${live.length?`Live now: ${live.join(' and ')}. `:''}OpenRecorder never resets or re-requests system access. Agents can’t change permissions.`};
 }
 function permissionsPane(){
   const open=state.platform==='linux'?'':'<button data-privacy="KIND">Open System Settings</button>';
-  const live=captureKnown()?['camera','microphone'].filter(k=>markOf(state.capture,k)==='live').map(k=>k==='camera'?'camera':'microphone'):[];
-  return `<div class="rows">${permissionRows().map(([kind,label,status,off])=>`<div class="row"><div class="row-text"><span class="row-label">${label}</span><small>${escapeHTML(status)}</small></div>${open?open.replace('KIND',kind):''}</div>`).join('')}</div><p class="note">${live.length?`Live now: ${live.join(' and ')}. `:''}OpenRecorder never resets or re-requests system access. Agents can’t change permissions.</p>`;
+  const w=permissionsWords();
+  const pages=state.platform==='linux'?'':' The buttons below open the system page directly. Opening it asks for nothing and changes nothing.';
+  const cold=`<p class="note" id="permCold" ${w.cold?'':'hidden'}>What OpenRecorder is allowed is reported by OpenRecorder itself, so it can’t be shown until it is open. <button id="permOpen" data-open-recorder ${w.opening?'disabled':''}>${escapeHTML(w.button)}</button> <span id="permWhy">${escapeHTML(w.why)}</span>${pages}</p>`;
+  return `${cold}<div class="rows">${permissionRows().map(([kind,label,status])=>`<div class="row"><div class="row-text"><span class="row-label">${label}</span><small id="permStatus-${kind}">${escapeHTML(status)}</small></div>${open?open.replace('KIND',kind):''}</div>`).join('')}</div><p class="note" id="permNote">${escapeHTML(w.note)}</p>`;
+}
+// Patches the text of the open Permissions pane without replacing any element (so focus, and a focused button, are untouched).
+function patchPermissions(){
+  const w=permissionsWords();
+  $('permCold').hidden=!w.cold;setText($('permOpen'),w.button);$('permOpen').disabled=w.opening;setText($('permWhy'),w.why);
+  for(const [kind,,status] of permissionRows())setText($('permStatus-'+kind),status);
+  setText($('permNote'),w.note);
 }
 function aboutPane(){
   const row=(k,v)=>`<div class="row"><div class="row-text"><span class="row-label">${k}</span></div><span class="value">${escapeHTML(v)}</span></div>`;
@@ -613,9 +644,16 @@ function renderSettingsNav(){
   $('settingsNav').innerHTML=settingPanes.map(([id,label])=>`<button role="tab" id="tab-${id}" data-pane="${id}" aria-selected="${id===settingsPane}" aria-controls="settingsPane" tabindex="${id===settingsPane?0:-1}">${escapeHTML(label)}</button>`).join('');
   $('settingsTitle').textContent=settingPanes.find(p=>p[0]===settingsPane)[1];$('settingsPane').setAttribute('aria-labelledby',`tab-${settingsPane}`);
 }
-const paneKey=()=>JSON.stringify([settingsPane,state.settings,state.root,state.freeBytes,!!state.active,settingsPane==='recording'?[state.capture?.capabilities,state.capture?.phase]:['permissions','about','camera'].includes(settingsPane)?[state.capture?.screenState,state.capture?.inputs,state.capture?.trayAvailable]:0,settingsPane==='sharing'?state.shares.map(s=>[s.id,s.shareId,shareState(s),s.expiresAt]):0]);
+const paneKey=()=>JSON.stringify([settingsPane,state.settings,state.root,state.freeBytes,!!state.active,settingsPane==='recording'?[state.capture?.capabilities,state.capture?.phase]:['permissions','about','camera'].includes(settingsPane)?[state.capture?.screenState,state.capture?.inputs,state.capture?.trayAvailable,captureKnown(),recorderView().state]:0,settingsPane==='sharing'?state.shares.map(s=>[s.id,s.shareId,shareState(s),s.expiresAt]):0]);
 function renderSettings(){if(!state)return;paneSignature=paneKey();$('settingsPane').innerHTML=paneMarkup(settingsPane);}
-function renderSettingsLive(){if($('settingsDialog').open&&!settingsSaving&&paneKey()!==paneSignature&&!$('settingsPane').contains(document.activeElement))renderSettings();}
+function renderSettingsLive(){
+  if(!$('settingsDialog').open||settingsSaving||paneKey()===paneSignature)return;
+  // Permissions has nothing to edit and holds buttons: refusing to refresh while focus was inside it froze the pane (still "Unknown",
+  // with Open focused) after the app was ready. It is patched in place instead, whatever has focus. A pane with form fields is still
+  // not rebuilt under a person's focus or pending edit.
+  if(settingsPane==='permissions'){patchPermissions();paneSignature=paneKey();return;}
+  if(!$('settingsPane').contains(document.activeElement))renderSettings();
+}
 function setSettingsStatus(text,kind){clearTimeout(settingsStatusTimer);$('settingsStatus').textContent=text;$('settingsStatus').classList.toggle('error',kind==='error');if(text)settingsStatusTimer=setTimeout(()=>{$('settingsStatus').textContent='';$('settingsStatus').classList.remove('error');},kind==='error'?8000:3000);}
 function openSettings(pane){
   if(!state)return;closeMenu();settingsPane=pane||settingsPane;setSettingsStatus('');renderSettingsNav();renderSettings();
@@ -674,7 +712,8 @@ $('settingsPane').onchange=e=>{if(e.target.name)saveSetting(e.target);};
 $('settingsPane').onclick=e=>{
   if(e.target.closest('#chooseDefaultRoot'))return chooseRoot();
   const privacy=e.target.closest('[data-privacy]');
-  if(privacy)return void captureCommand('open-privacy',{kind:privacy.dataset.privacy});
+  if(privacy)return void openPrivacy(privacy.dataset.privacy);
+  if(e.target.closest('[data-open-recorder]'))return void openRecorder();
   const revoke=e.target.closest('[data-revoke]');
   if(revoke)void api('unshare',{id:revoke.dataset.revoke,...(revoke.dataset.share?{shareId:revoke.dataset.share}:{})}).then(()=>refresh()).then(()=>toast('Link revoked.')).catch(showError);
 };
@@ -770,7 +809,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!reach.st
 const storedTheme=storageGet('local','or-theme');if(storedTheme&&storedTheme!=='system')document.documentElement.dataset.theme=storedTheme;
 async function init(){
   if(denied){lockedView('open');return;}
-  try{if(CONNECTION.embedded){const handshake=await rpc('ui/initialize',{appInfo:{name:'OpenRecorder',version:'0.6.0-preview.11'},appCapabilities:{availableDisplayModes:['fullscreen']},protocolVersion:'2026-01-26'});applyHost(handshake.hostContext);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},hostOrigin||'*');}}
+  try{if(CONNECTION.embedded){const handshake=await rpc('ui/initialize',{appInfo:{name:'OpenRecorder',version:'0.6.0-preview.12'},appCapabilities:{availableDisplayModes:['fullscreen']},protocolVersion:'2026-01-26'});applyHost(handshake.hostContext);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},hostOrigin||'*');}}
   catch(e){reachFail(e);}
   await refresh();
   // The native menu's Settings… opens Home at /settings: the same Settings the sidebar opens.
@@ -787,7 +826,12 @@ async function init(){
 // hides from the model; a host without it gets an honest "can't do that here" and the browser.
 const MARKS=['off','armed','starting','live','attention','access-off','not-connected','no-video'];
 const capturePhase=()=>state?.capture?.phase||'unavailable';
-const captureKnown=()=>!!state?.capture&&state.capture.known!==false&&state.capture.phase!=='unavailable';
+// A report is believed only while the library says the recorder app is ready. An old idle report (the library keeps it after the app goes
+// quiet) is not readiness: Home shows the app as not responding and the main control as Open. A take's last report stays as the last
+// known state (flagged stale), so Stop and the timer guards still apply without opening a second app.
+const captureReported=()=>!!state?.capture&&state.capture.known!==false&&state.capture.phase!=='unavailable';
+const backendReady=()=>!isObj(state?.recorder)||state.recorder.ready===true;
+const captureKnown=()=>captureReported()&&(backendReady()||state.capture.phase!=='idle');
 const controlsAvailable=()=>!denied&&!(CONNECTION.embedded&&uiControl.supported===false);
 const captureShown=()=>!!state&&controlsAvailable();
 const markOf=(cap,name)=>{const m=cap?.inputs?.[name]?.mark;return MARKS.includes(m)?m:'off';};
@@ -821,10 +865,14 @@ function renderCapture(){
   if(!show){if(lines.length){$('capLine').hidden=false;setText($('capLine'),lines.join(' '));}closePop();return;}
   const cap=known?state.capture:{phase:'idle',generation:0},phase=cap.phase,idle=phase==='idle',denied=known&&cap.screenState==='denied',inTake=known&&!idle;
   const record=$('capRecord');
-  record.dataset.phase=phase;record.dataset.blocked=String(idle&&denied);
-  setText($('capRecordLabel'),captureCopy(cap));
-  record.disabled=['stopping','saving'].includes(phase)||(idle&&denied)||(known&&cap.stale===true&&!idle);
-  record.setAttribute('aria-label',idle?'Record':phase==='recording'?'Stop recording':phase==='countdown'?'Cancel the countdown':captureCopy(cap));
+  // While the recorder app is not ready this control is not a Record button: it is Open OpenRecorder (a new recording opens it
+  // idle and ready), neutral and without the red dot. Once the app reports, it is Record exactly as before.
+  const closed=!known,opening=closed&&recorderView().state==='opening';
+  record.dataset.phase=closed?'closed':phase;record.dataset.blocked=String(idle&&denied);
+  setText($('capRecordLabel'),closed?(opening?'Opening…':'Open'):captureCopy(cap));
+  record.disabled=opening||['stopping','saving'].includes(phase)||(idle&&denied)||(known&&cap.stale===true&&!idle);
+  record.setAttribute('aria-label',closed?(opening?'Opening OpenRecorder':'Open OpenRecorder'):idle?'Record':phase==='recording'?'Stop recording':phase==='countdown'?'Cancel the countdown':captureCopy(cap));
+  record.title=closed?'Open OpenRecorder. It opens ready and records nothing until you press Record.':'';
   const elapsed=captureElapsed();$('capTime').hidden=elapsed===null;if(elapsed!==null)setText($('capTime'),captureClock(elapsed));
   setText($('capSourceName'),sourceName());$('capSource').disabled=inTake;$('capSource').title=inTake?'Can’t change during a recording':`Source, ${sourceName()}`;
   for(const [id,nameId,kind] of [['capCamera','capCameraName','camera'],['capMic','capMicName','microphone']]){
@@ -867,13 +915,64 @@ async function captureCommand(command,extra){
   try{await uiApi('capture-command',{command,launch:cap.launch,nonce:newRequestNumber(),expires:Date.now()+4000,...(needsTake?{generation:cap.generation}:{}),...extra});}catch(e){showError(e);return;}
   afterCommand();
 }
-// The person's one press on Record. If the app is up it starts the countdown; if it is not, the press starts it and
-// the library starts the countdown once when it reports. Either way it is one press and one recording.
+// A permission button. With the app running its own menu does it (it knows the platform); without it the library opens
+// the system page itself, so the button always does something or says why not. It asks for no access and changes none.
+async function openPrivacy(kind){
+  if(captureKnown()&&controlsAvailable())return void captureCommand('open-privacy',{kind});
+  if(!guard(`open-privacy-settings:${kind}`))return;
+  if(denied||(CONNECTION.embedded&&uiControl.supported===false))return void showError(new Error('This window can’t open System Settings. Open Home in your browser from the ••• menu.'));
+  try{await uiApi('open-privacy-settings',{kind});}catch(e){showError(uiControl.supported===false?new Error('This window can’t open System Settings. Open Home in your browser from the ••• menu.'):e);return;}
+  toast('Opening System Settings…');
+}
+// ---- The recorder app. Home runs without it (the library is its own host); permissions, devices and recording come from it.
+// "Open OpenRecorder" starts it, ready and idle: it never records, opens a device or waits to record. Home then waits for its
+// first report, says so, and after a while says it did not come and offers the same button again.
+const RECORDER_WAIT_MS=25000;
+const recorderWait={since:0,error:'',timer:0};
+const recorderHostState=()=>{const v=state?.recorder?.state;return isStr(v)?v:captureKnown()?'ready':'not-running';};
+function recorderView(){
+  if(captureKnown())return {state:'ready'};
+  if(recorderWait.error)return {state:'failed',text:recorderWait.error};
+  if(recorderWait.since)return Date.now()-recorderWait.since<RECORDER_WAIT_MS?{state:'opening'}:{state:'timeout'};
+  const host=recorderHostState();
+  return {state:host==='ready'?'not-running':host};
+}
+function renderRecorder(){
+  const box=$('recorderBanner'),v=recorderView();
+  const hide=!state||v.state==='ready'||!captureShown();
+  box.hidden=hide;if(!hide){
+    const words={'not-running':['OpenRecorder isn’t running','Home works, but the recorder app is closed, so permissions and devices can’t be shown. Open it to get ready; nothing is recorded until you press Record.','Open OpenRecorder'],
+      opening:['Opening OpenRecorder…','Waiting for it to report. This usually takes a few seconds.','Opening…'],
+      'not-responding':['OpenRecorder isn’t responding','It started but hasn’t reported. Wait a moment, or try again.','Try again'],
+      timeout:['OpenRecorder didn’t report in time','It may still be starting. Try again, or open it from the menu bar or Applications.','Try again'],
+      failed:['OpenRecorder didn’t open',v.text||'','Try again']}[v.state]||['OpenRecorder isn’t running','','Open OpenRecorder'];
+    setText($('recorderTitle'),words[0]);setText($('recorderText'),words[1]);setText($('recorderOpen'),words[2]);$('recorderOpen').disabled=v.state==='opening';
+  }
+  if(state)renderSettingsLive();
+}
+function renderOpening(){if(state){renderCapture();renderRecorder();}}
+async function openRecorder(){
+  if(denied)return;
+  if(CONNECTION.embedded&&uiControl.supported===false)return void showError(new Error('This window can’t open the recorder. Open Home in your browser from the ••• menu.'));
+  if(!guard('open-recorder'))return;
+  clearTimeout(recorderWait.timer);recorderWait.error='';recorderWait.since=Date.now();renderOpening();
+  try{await uiApi('open-recorder',{});}
+  catch(e){const hostless=uiControl.supported===false;recorderWait.since=0;recorderWait.error=hostless?'This window can’t open the recorder. Open Home in your browser from the ••• menu.':clip(e.message||'OpenRecorder could not be opened.',220);renderOpening();showError(hostless?new Error(recorderWait.error):e);return;}
+  const tick=async()=>{
+    await refresh();
+    if(captureKnown()){recorderWait.since=0;recorderWait.error='';renderOpening();toast('OpenRecorder is ready. Press Record when you want to start.');return;}
+    renderOpening();
+    if(recorderWait.since&&Date.now()-recorderWait.since<RECORDER_WAIT_MS)recorderWait.timer=setTimeout(tick,700);
+  };
+  recorderWait.timer=setTimeout(tick,700);
+}
+$('recorderOpen').onclick=()=>void openRecorder();
+// The person's press on Record, once the recorder app is ready and idle: it starts the countdown, bound to the launch and take Home
+// saw. Pressed while the app is not ready the same control is Open OpenRecorder (pressRecord): nothing is queued for later.
 async function startRecording(){
   if(!controlsAvailable()||!guard('record'))return;
   const cap=state?.capture,session=captureKnown()&&isStr(cap.launch)&&cap.launch?{launch:cap.launch,generation:cap.generation}:{};
   try{await uiApi('start-recording',{nonce:newRequestNumber(),expires:Date.now()+4000,...session});}catch(e){showError(e);void refresh();return;}
-  if(!session.launch)toast('Starting OpenRecorder…');
   afterCommand();
 }
 function pressRecord(){
@@ -881,7 +980,8 @@ function pressRecord(){
   const known=captureKnown(),phase=capturePhase();
   if(known&&phase==='recording')return void captureCommand('stop');
   if(known&&(phase==='countdown'||phase==='starting'))return void captureCommand('cancel');
-  if(!known||phase==='idle')return void startRecording();
+  if(!known)return void openRecorder();
+  if(phase==='idle')return void startRecording();
 }
 $('capRecord').onclick=pressRecord;
 $('capOpenTake').onclick=()=>{const r=newestStopped();if(r)openRecording(r.id);void captureCommand('dismiss-notice');};
