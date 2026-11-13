@@ -33,6 +33,12 @@ jobs:
         run: node tests/ui-cap-contracts.cjs
       - name: Product page download logic
         run: node --test tests/site-downloads.mjs
+      - name: Operator idle precheck is strict
+        run: python3 tests/handoff-precheck.py
+      - name: Source tree has no repository metadata
+        run: python3 tests/source-tree.py
+      - name: App icon
+        run: python3 tests/app-icon.py
       - name: Published-release identity guard
         run: python3 tests/release-guard.py
       - name: Product page structure, assets, policy and release guard

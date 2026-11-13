@@ -55,6 +55,22 @@ try:
     assert toolbar == [], 'the native desktop app was launched'
     ok('initialize/list/read/state leave no journal, storage, child, helper or desktop app; stdout parsed as JSON-RPC only')
 
+    # 2b. Plugin-only start: Home works with no recorder app, says so, and opening the recorder cannot install or launch
+    # anything from a binary that is not the packaged app (a throw-away HOME has no ~/Applications/OpenRecorder.app).
+    assert state['recorder'] == {'state': 'not-running', 'ready': False, 'opening': False, 'settingsPages': sys.platform in ('darwin', 'win32')}, state['recorder']
+    assert state['capture']['known'] is False and state['capture']['phase'] == 'unavailable', 'no permission or device fact without the app'
+    # Only an unpackaged core is asked to open the recorder here: a packaged bundle would really open its app (the packaged launch is a
+    # separate persistent-fixture check), so for a binary inside an .app this step is skipped, not passed.
+    if sys.platform == 'darwin' and '.app/Contents/MacOS/' not in fx.binary:
+        status, body = fx.jpost(c, 'open-recorder')
+        assert status == 400 and 'packaged OpenRecorder app' in body['error'], (status, body)
+        assert not (fx.user / 'Applications').exists(), 'a failed open must not create or fill ~/Applications'
+        assert fx.jpost(c, 'state')[1]['recorder']['state'] == 'not-running', 'a refused launch is not "opening"'
+    status, body = fx.jpost(c, 'open-privacy-settings', {'kind': 'https://example.com'})
+    assert status == 400 and 'Invalid privacy page' in body['error'], 'a free-text target is refused before anything is opened'
+    assert fx.children_of(c['pid']) == [] and not [a for p, pp, st, a in __import__('hostfixture').ps() if a.startswith(fx.binary) and '--desktop' in a], 'no app or helper was started'
+    ok('plugin-only: cold Home reports the recorder as not running with no permission facts; open-recorder from an unpackaged binary fails visibly and installs nothing; page-only ops validate their input')
+
     # 3. The model-visible Home result and the embedded resource never carry the owner key.
     home_raw = json.dumps(homes[0]) + json.dumps(view)
     assert c['key'] not in home_raw, 'owner key reached model-visible output'
@@ -207,6 +223,15 @@ try:
     assert view['capture']['phase'] == 'idle' and 'elapsedMs' not in view['capture'], 'the terminal report carries no timer'
     status, _ = fx.jpost(c, 'native-window-ready', {'pid': os.getpid()})
     ok('owner-only capture controls: refused for agents, media capability and foreign origin; validated; bound to the app launch, the take, a short expiry and a single use; replay and post-restart delivery refused; terminal report carries no timer')
+
+    # 4e. The two page-only operations the cold buttons use are the person's: no agent tool, no media capability, no foreign origin.
+    for op, data in (('open-recorder', {}), ('open-privacy-settings', {'kind': 'screen'})):
+        r = b.action(op, data)
+        assert r['isError'] is True and 'not available to agents' in r['content'][0]['text'], op
+        assert op not in enum
+        assert fx.post({'origin': c['origin'], 'key': media}, op, data, timeout=5)[0] == 403, op
+        assert fx.post(c, op, data, timeout=5, headers={'Origin': 'http://evil.example'})[0] == 403, op
+    ok('open-recorder and open-privacy-settings: refused for agents, the media capability and a foreign origin')
 
     # 4c. Preference keys and metadata-only folders over the owner HTTP API.
     status, st = fx.jpost(c, 'settings', {'preferences': {'rememberInputs': False, 'countdownSeconds': 0, 'cameraSize': 168, 'cameraShape': 'wide'}})

@@ -8,7 +8,7 @@ Only builds that exist for this version, never an older build relabelled. The ma
 
 | Asset | Contents |
 |---|---|
-| `OpenRecorder-<version>-mac-arm64.zip` | One folder: the signed macOS app, byte for byte, and beside it the licence texts and notices (`LICENSE`, `THIRD_PARTY.md`, `licenses/`, `README.txt`, `INSTALL.md`); nothing is added inside the bundle |
+| `OpenRecorder-<version>-mac-arm64.zip` | One folder: the signed macOS app, byte for byte, and beside it the licence texts and notices (`LICENSE`, `THIRD_PARTY.md`, `licenses/`, `README.txt`, `INSTALL.md`); nothing is added inside the bundle except its own icon, and the ZIP carries no build-machine extended attributes (no `._name` AppleDouble entries or `__MACOSX` folder: `make-release.py` zips with `ditto --norsrc`, `tests/mac-zip.py` pins it on a Mac, and `verify-release.py` rejects such entries) |
 | `openrecorder-plugin-<version>-darwin-arm64.zip` | The local plugin (Codex and Claude Code), carrying the same app as `.runtime/` |
 | `openrecorder-media-sources-<version>.tar.gz` | Corresponding FFmpeg/x264 sources and build scripts (GPL obligation for the bundled helper) |
 | `openrecorder-<version>-source.tar.gz` | The source tree |
@@ -20,7 +20,7 @@ A build of another platform must come from the same source as the macOS app; say
 ## Steps
 
 1. **Clean checkout of the commit to release**; `plugin.json`, `.claude-plugin/plugin.json`, `engine/Cargo.toml`, the page's `ui/initialize` version and `CFBundleVersion` in `scripts/build-native.py` agree (the Rust tests and `scripts/verify-release.py` check this).
-2. **Build the app** with `scripts/build-native.py /path/to/ffmpeg` on a Mac, signed with your own identity (`OPENRECORDER_SIGN_IDENTITY`, optionally `OPENRECORDER_SIGN_KEYCHAIN`; the default is an ad-hoc signature). Keep the same identity across releases or macOS treats each as a new app. Do not paste the identity or the keychain path into any file in this repository.
+2. **Build the app** with `scripts/build-native.py /path/to/ffmpeg` on a Mac, signed with your own identity (`OPENRECORDER_SIGN_IDENTITY`, optionally `OPENRECORDER_SIGN_KEYCHAIN`; the default is an ad-hoc signature). Keep the same identity across releases or macOS treats each as a new app. Do not paste the identity or the keychain path into any file in this repository. When you build a different candidate of the same version, clear the embedded page's build output first (`cargo clean --release --package openrecorder-core`, and the same for each cross target): the page is compiled into the core, and a shared target directory once produced a core that still carried the previous page. Check each core for the current page, and for the same input hashes as the source, before packaging.
 3. **Assemble**: `python3 scripts/make-release.py --app /path/to/OpenRecorder.app --media-sources /path/to/media-sources.tar.gz --out dist` (the bundle is only read).
 4. **Verify locally**: `python3 scripts/verify-release.py dist` and `python3 scripts/check-site.py`. Both must print `"passed": true`.
 5. **Check by hand** what automation cannot: open the app from the ZIP on a Mac, see the menu-bar disc, `OpenRecorder --doctor`; add the plugin ZIP to Codex and to Claude Code as in `docs/install.md`; record a short take yourself; open Home; create and open a share with a real tunnel if you can. Write down what you ran.
@@ -29,7 +29,7 @@ A build of another platform must come from the same source as the macOS app; say
    git tag -s v<version>   # or an annotated tag
    gh release create v<version> dist/* --prerelease --title "OpenRecorder <version>" --notes-file docs/release-notes-<version>.md
    ```
-   The notes are the checked-in file `docs/release-notes-<version>.md` (for 0.6.0-preview.11: `docs/release-notes-0.6.0-preview.11.md`). They must say: preview, macOS 26.0 or later on Apple silicon, not notarized, Linux and Windows builds experimental and never run on hardware, and carry the checksums.
+   The notes are the checked-in file `docs/release-notes-<version>.md` (for 0.6.0-preview.12: `docs/release-notes-0.6.0-preview.12.md`; the preview.11 notes stay as published). They must say: preview, macOS 26.0 or later on Apple silicon, not notarized, Linux and Windows builds experimental and never run on hardware, and carry the checksums.
 7. **Let the verify workflow run** (or run `python3 scripts/verify-release.py --base-url https://github.com/gustavonline/openrecorder/releases/download/v<version>`): it downloads every asset and checks it.
 8. **Open the download on the site** only now: `python3 scripts/update-site-release.py dist` (the reviewed local directory) first requires the published `manifest.json` and `SHA256SUMS` to be byte-identical to the local ones, then re-verifies the published files and rewrites `site/releases.json` from the reviewed manifest; a coherent release that differs from the reviewed one is refused. Review, commit and push it.
 9. **Deploy the site** (Cloudflare Pages, existing account; `wrangler login` first):

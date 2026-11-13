@@ -208,7 +208,7 @@ pub fn screen_settings() -> Result<(), String> {
         c
     } else if cfg!(target_os = "windows") {
         let mut c = std::process::Command::new("explorer.exe");
-        c.arg("ms-settings:privacy-broadfilesystemaccess");
+        c.arg("ms-settings:privacy-graphicscaptureprogrammatic");
         c
     } else {
         return Ok(());

@@ -9,16 +9,16 @@ A small native screen recorder. Control it from the menu bar (macOS) or tray (Wi
 
 [Website](https://openrecorder.gustavonline.com/) · [Releases](https://github.com/gustavonline/openrecorder/releases) · [Install](docs/install.md) · [How it works](docs/architecture.md)
 
-**Version 0.6.0-preview.11 (build 16), a private-quality preview made public.** Free and open source (MIT). Made by Gustav Anderson.
+**Version 0.6.0-preview.12 (build 17), a preview.** Free and open source (MIT). Made by Gustav Anderson. It follows 0.6.0-preview.11, the first public release, which stays published exactly as it was ([CHANGELOG](CHANGELOG.md)).
 
 ## Status, honestly
 
 | | |
 |---|---|
-| **macOS 26.0 or later, Apple silicon** | Built and used by its author. The shipped app and plugin need macOS 26.0 or later because the bundled media helper is built for 26.0 (the app executable alone is built for 11.0); earlier systems are not supported and untested ([details](docs/install.md#macos-app-apple-silicon-macos-260-or-later)). A release build is published only when its files and SHA-256 checksums have been verified (see [Releases](https://github.com/gustavonline/openrecorder/releases)). **Not notarized**: macOS will warn on first open ([steps](docs/install.md#macos-first-open)). |
-| **Linux x64, Windows x64** | **Experimental builds** compiled from the same source, published with their checksums but **never run on a real desktop by the author**: tray, capture and permissions are unverified. The Linux build was made on a very new system (it needs glibc 2.43 or newer plus `libdbus`, `libpipewire` and `libasound`), so on most distributions build from source instead. The Windows build is cross-compiled. The Rust tests have run on Linux and the Windows target type-checks. |
-| **Frame rate and performance** | 30 fps recording was accepted on the author's Mac. 60 fps depends on your computer and is never assumed: a take that cannot keep up stops with its files kept. No RAM, CPU or benchmark claim is made for this build. |
-| **Sharing** | Temporary links through an optional Cloudflare Quick Tunnel (`cloudflared`, not bundled). The author reports it working in their own use; what was checked for this release is a synthetic in-process server with a real Firefox, and **no separate public-tunnel test was run for it**. |
+| **macOS 26.0 or later, Apple silicon** | Built and used by its author. The shipped app and plugin need macOS 26.0 or later because the bundled media helper is built for 26.0 (the app executable alone is built for 11.0, and this version's `Info.plist` says 26.0 too); earlier systems are not supported and untested ([details](docs/install.md#macos-app-apple-silicon-macos-260-or-later)). A release build is published only when its files and SHA-256 checksums have been verified (see [Releases](https://github.com/gustavonline/openrecorder/releases)). **Not notarized**: macOS will warn on first open ([steps](docs/install.md#macos-first-open)). |
+| **Linux x64, Windows x64** | **Experimental builds** compiled from the same source, published with their checksums but **never run on a real desktop by the author**: tray, capture and permissions are unverified. The Linux build was made on a very new system (it needs glibc 2.43 or newer plus `libdbus`, `libpipewire` and `libasound`), so on most distributions build from source instead. For this version the Linux library host (the backend, no recorder window, no capture) was also built and run on a Linux machine and idled normally; **desktop capture, the tray and permissions on Linux are still unverified**. The Windows build is cross-compiled and **unverified on Windows hardware**. |
+| **Frame rate and performance** | 30 fps recording was accepted on the author's Mac. 60 fps depends on your computer and is never assumed: a take that cannot keep up stops with its files kept. Two private measurements on the author's own setup, not a promise and not total recording memory: the macOS recorder app plus its library host, idle with no capture and excluding any browser, held about 44.5 MiB resident; the library host alone about 8.7 MiB; on one Linux x64 machine the library host alone idled at about 7.3 MiB resident (4.1 MiB proportional). No CPU or frame-rate benchmark is claimed. |
+| **Sharing** | Temporary links through an optional Cloudflare Quick Tunnel (`cloudflared`, not bundled). The author reports it working in their own use; what was checked for this release is a synthetic in-process server with a real Firefox, and **no separate public-tunnel test was run for it**. Copy invitation puts a plain-text Danish message on the clipboard (link and code each on their own line); a recipient needs only a browser. The Quick Tunnel link is temporary and works only while your computer and the tunnel stay online: a link with no end time is not permanent hosting. |
 | **Agent window and plugin install** | With the plugin installed, posters and playback in Codex’s embedded window were accepted by the author on the author’s own setup; other hosts and versions are untested. Installation was separately checked in isolated Codex and Claude Code command-line configurations (see [docs/install.md](docs/install.md#plugin-for-codex-and-claude-code)): marketplace registration, install, `--doctor` and an MCP `initialize`/tool list, but not the GUI, a recording or any device. The browser always works as a fallback. |
 
 ## What it does
@@ -34,9 +34,9 @@ A small native screen recorder. Control it from the menu bar (macOS) or tray (Wi
 
 Short version; the details, checksums and uninstall are in [docs/install.md](docs/install.md).
 
-**macOS app**: download `OpenRecorder-0.6.0-preview.11-mac-arm64.zip` from the release (Linux and Windows: the experimental `…-linux-x64.tar.gz` / `…-windows-x64.zip`, see [docs/install.md](docs/install.md#linux-and-windows-experimental)), unzip (the folder also holds the licence texts), move `OpenRecorder.app` to `~/Applications`, open it once (it is not notarized: see the steps), then use the menu-bar icon.
+**macOS app**: download `OpenRecorder-0.6.0-preview.12-mac-arm64.zip` from the release (Linux and Windows: the experimental `OpenRecorder-0.6.0-preview.12-linux-x64.tar.gz` / `…-windows-x64.zip`, see [docs/install.md](docs/install.md#linux-and-windows-experimental)), unzip (the folder also holds the licence texts), move `OpenRecorder.app` to `~/Applications`, open it once (it is not notarized: see the steps), then use the menu-bar icon.
 
-**Codex** (after downloading and unzipping `openrecorder-plugin-0.6.0-preview.11-darwin-arm64.zip`; add the `openrecorder` folder *inside* the unzipped archive, not the folder that contains it):
+**Codex** (after downloading and unzipping `openrecorder-plugin-0.6.0-preview.12-darwin-arm64.zip`; add the `openrecorder` folder *inside* the unzipped archive, not the folder that contains it):
 
 ```sh
 codex plugin marketplace add /path/to/unzipped/openrecorder
@@ -50,7 +50,7 @@ codex plugin add openrecorder@openrecorder
 /plugin install openrecorder@openrecorder
 ```
 
-The plugin carries the same native binary, so it needs neither Node.js nor Python. It shares the app's data and its single-owner lease.
+The plugin carries the same native binary, so using it takes **no Node.js, Python or Rust** (Rust is only for building from source). It shares the app's data and its single-owner lease. Adding the plugin only registers it. Home (the library) then starts on its own and works with the recorder app closed; the recorder app is installed to `~/Applications` and opened the first time a person presses **Open OpenRecorder**, the main control in Home while the app is closed. Opening it queues nothing: it never records, and no countdown waits for it; Record appears once the app has reported, and records only when pressed ([what opens when](docs/install.md#what-opens-when)). A library that is already running (for example from preview.11) is never replaced or quit by ordinary use; moving an installation to a new version is a separate, deliberate step in a quiet moment, not an auto-updater ([details](docs/architecture.md#a-library-that-is-already-running)).
 
 **From source** (any platform; needs Rust and a media helper):
 

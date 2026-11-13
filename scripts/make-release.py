@@ -29,6 +29,14 @@ def run(*cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
 
+def zip_folder(folder, out):
+    """The distributable ZIP of one folder (kept as the ZIP's top folder): file contents, modes and symlinks only. `ditto` otherwise
+    serializes the build machine's extended attributes (com.apple.provenance, quarantine, ...) as AppleDouble `._name` entries, which
+    are not part of the app, break the notice/Resources assertions and would land on the recipient's disk. `--norsrc` leaves the
+    attributes out of the archive only; the staged files are not modified and the signed bundle's seal does not cover them."""
+    run('/usr/bin/ditto', '-c', '-k', '--keepParent', '--norsrc', str(folder), str(out))
+
+
 def deterministic_tar(members, out, prefix):
     """members: list of (relative posix path, absolute file path). Sorted, zero owner/time, reproducible."""
     with open(out, 'wb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, compresslevel=9, mtime=0) as gz, tarfile.open(fileobj=gz, mode='w') as tar:
@@ -80,6 +88,10 @@ def main():
         mac_top = names['app'][:-len('.zip')]
         mac_min = macos['minimumOS']; exe_minos = macos['executableMinos']; helper_minos = macos['mediaHelperMinos']
         stage = t / mac_top; stage.mkdir()
+        # What the bundle's own Info.plist says is read, never assumed: the bundle is signed and is not edited to say anything else.
+        plist_min = info.get('LSMinimumSystemVersion')
+        plist_sentence = (f'The app as shipped needs macOS {mac_min}, and its Info.plist (LSMinimumSystemVersion) says so.' if plist_min == mac_min else
+                          f'The app as shipped needs macOS {mac_min}; its Info.plist (LSMinimumSystemVersion) says {plist_min}, which is not what the bundled helper needs, and the signed app is unchanged.')
         copy = stage / 'OpenRecorder.app'; run('/usr/bin/ditto', str(app), str(copy))
         run('/usr/bin/codesign', '--verify', '--deep', '--strict', str(copy))
         for name in ('LICENSE', 'THIRD_PARTY.md'):
@@ -88,10 +100,10 @@ def main():
         shutil.copyfile(ROOT / 'docs/install.md', stage / 'INSTALL.md')
         (stage / 'README.txt').write_text(
             f'OpenRecorder {version} for macOS (Apple silicon). Requires macOS {mac_min} or later.\n\n'
-            f'The app executable is built for macOS {exe_minos}, but the bundled media helper (Contents/Helpers/ffmpeg) is built for macOS {helper_minos},\n'
-            'so the app as shipped needs macOS ' + mac_min + '. Info.plist still says 12.3 (the capture interface the source uses); the signed app is unchanged.\n\n'
+            f'The app executable is built for macOS {exe_minos}, but the bundled media helper (Contents/Helpers/ffmpeg) is built for macOS {helper_minos}.\n'
+            + plist_sentence + '\n\n'
             'Move OpenRecorder.app to ~/Applications and open it. It is signed with a local development identity, not an Apple Developer ID,\n'
-            'and is not notarized, so macOS warns the first time; INSTALL.md links Apple\'s steps for opening it. OpenRecorder.app is the accepted\n'
+            'and is not notarized, so macOS warns the first time; INSTALL.md links Apple\'s steps for opening it. OpenRecorder.app is the signed\n'
             'bundle, unchanged (its executable and media-helper SHA-256 are recorded in manifest.json); the notices beside it are not part of the signed bundle.\n\n'
             'Contents/Helpers/ffmpeg inside the app is FFmpeg with x264 (GPL-2.0-or-later) run as a separate program. Its licence texts are in\n'
             'licenses/, the credits are in THIRD_PARTY.md, and its corresponding sources are published beside this download as\n'
@@ -99,7 +111,7 @@ def main():
         stamp0 = int(os.environ.get('SOURCE_DATE_EPOCH', '1767225600'))
         for item in [stage / n for n in ('LICENSE', 'THIRD_PARTY.md', 'INSTALL.md', 'README.txt')] + list((stage / 'licenses').rglob('*')) + [stage / 'licenses']:
             os.utime(item, (stamp0, stamp0))
-        run('/usr/bin/ditto', '-c', '-k', '--keepParent', str(stage), str(out / names['app']))
+        zip_folder(stage, out / names['app'])
         # 2. the plugin: the same bundle as its runtime.
         runtime = t / 'darwin-arm64.tar.gz'
         with tarfile.open(runtime, 'w:gz') as tar:

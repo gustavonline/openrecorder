@@ -114,8 +114,8 @@ input[type=checkbox][role=switch]{-webkit-appearance:none;appearance:none;positi
 .cap-record{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:96px;height:30px;padding:0;border:0;border-radius:999px;background:var(--record);color:#fff;font-weight:700;font-size:13px}
 .cap-record .cap-glyph{width:10px;height:10px;border-radius:50%;background:#fff}
 .cap-record[data-phase=recording] .cap-glyph{border-radius:2px}
-.cap-record[data-phase=countdown],.cap-record[data-phase=starting],.cap-record[data-phase=stopping],.cap-record[data-phase=saving]{background:var(--control);color:var(--text)}
-.cap-record[data-phase=countdown] .cap-glyph,.cap-record[data-phase=starting] .cap-glyph,.cap-record[data-phase=stopping] .cap-glyph,.cap-record[data-phase=saving] .cap-glyph{display:none}
+.cap-record[data-phase=closed],.cap-record[data-phase=countdown],.cap-record[data-phase=starting],.cap-record[data-phase=stopping],.cap-record[data-phase=saving]{background:var(--control);color:var(--text)}
+.cap-record[data-phase=closed] .cap-glyph,.cap-record[data-phase=countdown] .cap-glyph,.cap-record[data-phase=starting] .cap-glyph,.cap-record[data-phase=stopping] .cap-glyph,.cap-record[data-phase=saving] .cap-glyph{display:none}
 .cap-record[data-blocked=true]{background:var(--control);color:var(--text3)}
 .cap-time{font-variant-numeric:tabular-nums;color:var(--text);min-width:3.2em}
 .cap-line{margin:0 0 12px;color:var(--text2);font-size:13px}

@@ -21,6 +21,11 @@ def sha256(path):
 
 def is_source(path, root=ROOT):
     rel = path.relative_to(root)
+    # A repository's own metadata is never source, wherever it sits and whatever it is: the `.git` directory of a checkout, and the
+    # `.git` FILE of a worktree or submodule, which names the owner's path on this machine. Hidden files that are source (.github,
+    # .agents, .claude-plugin, .gitignore, ...) have other names and stay.
+    if '.git' in rel.parts:
+        return False
     if any(part in IGNORED_PARTS for part in rel.parts[:-1]) and not (rel.parts[0] == 'engine' and rel.parts[1] == 'vendor'):
         return False
     if rel.parts[0] in ('engine',) and len(rel.parts) > 1 and rel.parts[1] in ('target', 'runtime'):
@@ -43,6 +48,12 @@ def scan_private(blob, where):
     return [f'{where}: contains {m.decode(errors="replace")!r}' for m in PRIVATE_MARKERS if m in blob]
 
 
+def _filesystem_metadata(name):
+    """AppleDouble `._x` companions and `__MACOSX` folders: a build machine's extended attributes serialized into an archive."""
+    parts = pathlib.PurePosixPath(name).parts
+    return '__MACOSX' in parts or any(part.startswith('._') for part in parts)
+
+
 def zip_problems(path):
     """Structural problems of a published ZIP: unsafe names, private markers in text members, keys."""
     problems = []
@@ -53,6 +64,10 @@ def zip_problems(path):
                 problems.append(f'{path.name}: unsafe member name {name!r}')
             if name.lower().endswith(('.pem', '.key', '.p12')):
                 problems.append(f'{path.name}: key material {name!r}')
+            if '.git' in pathlib.PurePosixPath(name).parts:
+                problems.append(f'{path.name}: repository metadata or worktree pointer {name!r}')
+            if _filesystem_metadata(name):
+                problems.append(f'{path.name}: build-machine filesystem metadata {name!r}')
             if not info.is_dir() and info.file_size < 2_000_000 and name.endswith(('.json', '.md', '.txt', '.svg', '.html', '.js', '.py', '.toml', '.plist')):
                 problems += scan_private(z.read(name), f'{path.name}:{name}')
     return problems
@@ -66,6 +81,10 @@ def tar_problems(path):
                 problems.append(f'{path.name}: unsafe member name {m.name!r}')
             if m.issym() or m.islnk():
                 problems.append(f'{path.name}: link member {m.name!r}')
+            if '.git' in pathlib.PurePosixPath(m.name).parts:
+                problems.append(f'{path.name}: repository metadata or worktree pointer {m.name!r}')
+            if _filesystem_metadata(m.name):
+                problems.append(f'{path.name}: build-machine filesystem metadata {m.name!r}')
             if m.isfile() and m.size < 2_000_000 and m.name.endswith(('.json', '.md', '.txt', '.sh', '.rs', '.toml', '.py', '.js', '.html', '.css')):
                 problems += scan_private(t.extractfile(m).read(), f'{path.name}:{m.name}')
     return problems
@@ -95,4 +114,5 @@ def macos_minimum(app, info):
     return {'minimumOS': effective, 'architecture': 'arm64', 'basis': 'highest LC_BUILD_VERSION minos among the shipped Mach-O executables (otool -l)',
             'executableMinos': exe_minos, 'mediaHelperMinos': helper_minos, 'sdk': sdk,
             'infoPlistLSMinimumSystemVersion': info.get('LSMinimumSystemVersion'),
-            'note': 'The Info.plist value is the minimum of the capture interface the source uses; the bundled media helper is what sets the effective minimum. The signed app is not altered.'}
+            'note': ('The Info.plist value equals the effective minimum: the bundled media helper sets it and the plist says the same.' if info.get('LSMinimumSystemVersion') == effective else
+                     'The Info.plist value differs from the effective minimum, which the bundled media helper sets. The signed app is not altered.')}

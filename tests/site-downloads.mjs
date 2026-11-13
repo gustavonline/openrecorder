@@ -18,7 +18,12 @@ test('a pending release offers no download on any system', () => {
 });
 test('the committed releases.json is valid for the phase it is in: pending offers nothing, published offers only verified assets of this release', () => {
   assert.equal(committed.repository, 'gustavonline/openrecorder');
-  assert.equal(committed.version, plugin.version); assert.equal(committed.tag, `v${plugin.version}`);
+  assert.equal(committed.tag, `v${committed.version}`);
+  const order = ver => ver.match(/\d+/g).map(Number);
+  const notNewer = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const x = a[i] ?? 0, y = b[i] ?? 0; if (x !== y) return x < y; } return true; };
+  // A pending file is the version being prepared; a published one is a release that is out, and the source may be ahead of it, never behind.
+  if (committed.status === 'pending') assert.equal(committed.version, plugin.version);
+  else assert.ok(notNewer(order(committed.version), order(plugin.version)), `${committed.version} is newer than the source ${plugin.version}`);
   assert.ok(['pending', 'published'].includes(committed.status), `unknown status ${committed.status}`);
   if (committed.status === 'pending') {
     assert.deepEqual(committed.platforms, {}); assert.equal(committed.verifiedAt, null);

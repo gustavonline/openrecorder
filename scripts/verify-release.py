@@ -158,7 +158,9 @@ def check(dist):
     with zipfile.ZipFile(dist / mac['name']) as z:
         said = all(f"macOS {stated.get('minimumOS')} or later" in z.read(f'{mac_top}/{n}').decode() for n in ('README.txt', 'INSTALL.md'))
     (ok if said else fail)(f"{mac['name']}: its README.txt and INSTALL.md state macOS {stated.get('minimumOS')} or later")
-    (ok if not any(i.startswith(f'{mac_top}/OpenRecorder.app/Contents/Resources/') for i in inside) else fail)(f"{mac['name']}: nothing was added inside the signed bundle")
+    # The notices sit beside the app, never inside it. Since preview.12 the bundle carries its own icon (and nothing else) in Resources.
+    resources = {i for i in inside if i.startswith(f'{mac_top}/OpenRecorder.app/Contents/Resources/') and not i.endswith('/')}
+    (ok if resources <= {f'{mac_top}/OpenRecorder.app/Contents/Resources/OpenRecorder.icns'} else fail)(f"{mac['name']}: nothing but the app icon is inside the bundle's Resources ({sorted(resources) or 'empty'})")
     if sys.platform == 'darwin':
         with tempfile.TemporaryDirectory() as t:
             subprocess.run(['/usr/bin/ditto', '-x', '-k', str(dist / mac['name']), t], check=True)
@@ -167,6 +169,10 @@ def check(dist):
             (ok if r.returncode == 0 else fail)('app ZIP: the extracted bundle verifies with codesign')
             info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
             good = info['CFBundleIdentifier'] == 'online.openrecorder.desktop' and info['LSUIElement'] is True and str(manifest['build']) == info['CFBundleVersion'] and rt.sha256(app / 'Contents/MacOS/OpenRecorder') == manifest['executableSha256'] and rt.sha256(app / 'Contents/Helpers/ffmpeg') == manifest['mediaHelperSha256']
+            # From preview.12 the app carries its own icon, named by the plist (preview.11 had none, and stays verifiable).
+            if tuple(int(n) for n in re.findall(r'\d+', manifest['version'])) >= (0, 6, 0, 12):
+                icon = info.get('CFBundleIconFile')
+                (ok if icon and (app / 'Contents/Resources' / f'{icon}.icns').is_file() and (app / 'Contents/Resources' / f'{icon}.icns').read_bytes()[:4] == b'icns' else fail)('app ZIP: the bundle names an icon and carries it as an icns file')
             seen = rt.macos_minimum(app, info)
             (ok if all(seen[k] == stated.get(k) for k in ('minimumOS', 'executableMinos', 'mediaHelperMinos', 'sdk')) else fail)(f"app ZIP: otool shows executable {seen['executableMinos']}, helper {seen['mediaHelperMinos']}, so macOS {seen['minimumOS']}, as the manifest states")
             (ok if good else fail)('app ZIP: identity, one menu-bar icon (LSUIElement), build number and executable and media-helper hashes match the manifest')

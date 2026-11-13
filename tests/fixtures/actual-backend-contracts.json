@@ -420,7 +420,7 @@
         },
         "shares": [],
         "totalBytes": 0,
-        "version": "0.6.0-preview.11"
+        "version": "0.6.0-preview.12"
       }
     },
     {
@@ -538,7 +538,7 @@
         },
         "shares": [],
         "totalBytes": 0,
-        "version": "0.6.0-preview.11"
+        "version": "0.6.0-preview.12"
       }
     },
     {
@@ -603,7 +603,7 @@
         },
         "shares": [],
         "totalBytes": 0,
-        "version": "0.6.0-preview.11"
+        "version": "0.6.0-preview.12"
       }
     }
   ],
