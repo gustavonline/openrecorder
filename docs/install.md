@@ -55,13 +55,14 @@ The plugin ZIP (`openrecorder-plugin-<version>-<platform>.zip`) is a complete lo
    /plugin marketplace add /path/to/unzipped/openrecorder
    /plugin install openrecorder@openrecorder
    ```
-4. Ask your agent to open OpenRecorder Home (`openrecorder_home`). In a host that shows embedded apps it appears inline; otherwise ask it to open the library in your browser.
+4. Ask your agent to open OpenRecorder Home (`openrecorder_home`). In a host that shows embedded apps it appears inline; otherwise ask it to open the library in your browser. A conversation that was already open when the plugin was installed or updated may keep its old tool list or show only text and data for Home; start a fresh session (see [OpenAI's plugin documentation](https://learn.chatgpt.com/docs/plugins)).
 
 These commands follow the local-marketplace layout (`.agents/plugins/marketplace.json`, `.claude-plugin/marketplace.json`) that each tool documents. The manifests are plain JSON and the folder is a normal plugin directory, so if a command differs in your version of a tool, adjust it.
 
 **What was checked, kept apart.**
 
 - *Preview.11 installation (historical).* With a preview.11 plugin ZIP extracted with `ditto`, the commands above were run with Codex CLI 0.167.1 and Claude Code 2.1.311, each in an isolated, throw-away configuration. Both registered the marketplace and installed `openrecorder@openrecorder`; the installed runtime binary kept its execute bit (mode 0755); `--doctor` on it reported `ok` with `deviceAccessRequested: false`; and an MCP `initialize` over stdio answered and listed the three tools. No GUI, recording, device or tunnel was involved. This is evidence about preview.11 only. It is not proof that preview.12 installs, and the preview.11 runtime is not the preview.12 runtime.
+- *Preview.12 installation (the published plugin ZIP).* The published preview.12 plugin ZIP was installed with Codex CLI 0.167.2 and Claude Code 2.1.311, each in an isolated, throw-away configuration (`marketplace add`, then `plugin add` / `plugin install openrecorder@openrecorder`). The installed runtime was executable and passed `--doctor` (version 0.6.0-preview.12, `deviceAccessRequested: false`); an MCP `initialize` reported 0.6.0-preview.12 and listed the three tools. No GUI, recording, device or tunnel was involved, and no embedded Home window in an existing conversation is claimed.
 - *Preview.12 runtime (separate evidence).* The signed preview.12 core in this release's Mac app and plugin passed the three protocol suites and `--doctor` (version 0.6.0-preview.12, `deviceAccessRequested: false`) on its own, outside the install commands, and `tests/package-manifests.py` checks the plugin manifests. A fresh smoke check of the install commands against the preview.12 plugin you downloaded (registration, then `--doctor`, then an MCP `initialize` that reports 0.6.0-preview.12) is the way to confirm it on your machine.
 
 Extract with Finder, `ditto -x -k` or `unzip`: an extractor that discards file modes leaves the binary non-executable. On the author’s own setup, posters and playback in Codex’s embedded window were accepted; no other host is claimed.
