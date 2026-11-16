@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0-preview.14 (build 19)
+
+- Fixed the microphone connection inheriting non-blocking mode on macOS. A full loopback buffer no longer stops a take with `Resource temporarily unavailable (os error 35)`.
+- Audio writes wait through transient backpressure, resume from partial writes, and retain bounded queues and stuck-encoder/finish limits. Queued samples captured before Stop are drained.
+- A microphone failure still reports an interrupted take, but properly finalized video files retain their measured duration and playback rather than being treated as unfinished.
+- Verified with a short real loopback pause: the shipped implementation reproduces the exact error, and the fix continues with the expected audio length. No new long physical-device test is claimed. Browser target persistence survived an isolated library restart, and the owner confirmed opening inside ChatGPT/Codex; no preference code change was needed.
+
 ## 0.6.0-preview.13 (build 18)
 
 - Recordings continue at the rate the encoder sustains instead of stopping once cumulative timing lag reaches 0.75 seconds. Video timestamps preserve real gaps, microphone timing starts alongside video, and slow frames no longer shorten the picture against the sound. A genuinely stuck encoder still fails clearly; requested resolution, frame rate and the hardware codec are preserved.

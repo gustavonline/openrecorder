@@ -345,9 +345,10 @@ fn finalize_take(
     primary: Result<(), Box<dyn std::error::Error>>,
 ) -> (Result<(), Box<dyn std::error::Error>>, serde_json::Value) {
     let finalization = encoder.finish();
+    // A microphone failure is reported, but it does not hide that the video files were closed properly and play.
     let outcome = match &finalization {
-        Ok(()) => serde_json::json!({"status":"completed","error":null}),
-        Err(error) => serde_json::json!({"status":"failed","error":error.to_string()}),
+        Ok(()) => serde_json::json!({"status":"completed","error":null,"videoFinalized":true}),
+        Err(error) => serde_json::json!({"status":"failed","error":error.to_string(),"videoFinalized":encoder.video_finalized()}),
     };
     (
         primary.and_then(|()| finalization.map_err(Into::into)),

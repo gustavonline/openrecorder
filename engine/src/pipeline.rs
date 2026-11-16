@@ -438,6 +438,9 @@ pub struct Pipeline {
     outputs: Vec<std::path::PathBuf>,
     executable: String,
     final_audio_diagnostics: Option<serde_json::Value>,
+    /// Every video frame handed over was written, the encoder exited cleanly and every file was finalized, whatever
+    /// happened to the microphone track.
+    video_finalized: bool,
     codec: &'static str,
     fps: u32,
     has_audio: bool,
@@ -677,6 +680,7 @@ impl Pipeline {
                 .collect(),
             executable: exe.into(),
             final_audio_diagnostics: None,
+            video_finalized: false,
             codec,
             fps,
             has_audio,
@@ -1018,12 +1022,19 @@ impl Pipeline {
             (Err(error), Ok(())) => Err(error),
             (_, other) => other,
         };
+        self.video_finalized = video_result.is_ok();
         self.write_timing(audio_result.is_err(), video_result.is_err());
         match (audio_result, video_result) {
             (Err(audio), Err(video)) => Err(io::Error::other(format!("{audio}; {video}"))),
             (Err(error), _) | (_, Err(error)) => Err(error),
             _ => Ok(()),
         }
+    }
+}
+impl Pipeline {
+    /// Whether `finish` closed and finalized every video file (true even when the microphone track failed).
+    pub fn video_finalized(&self) -> bool {
+        self.video_finalized
     }
 }
 impl Drop for Pipeline {

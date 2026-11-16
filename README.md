@@ -9,7 +9,7 @@ A small native screen recorder. Control it from the menu bar (macOS) or tray (Wi
 
 [Website](https://openrecorder.gustavonline.com/) · [Releases](https://github.com/gustavonline/openrecorder/releases) · [Install](docs/install.md) · [How it works](docs/architecture.md)
 
-**Version 0.6.0-preview.13 (build 18), a preview.** Free and open source (MIT). Made by Gustav Anderson. It follows preview.12; the earlier published releases stay unchanged ([CHANGELOG](CHANGELOG.md)).
+**Version 0.6.0-preview.14 (build 19), a preview.** Free and open source (MIT). Made by Gustav Anderson. It follows preview.13; the earlier published releases stay unchanged ([CHANGELOG](CHANGELOG.md)).
 
 ## Status, honestly
 
@@ -34,9 +34,9 @@ A small native screen recorder. Control it from the menu bar (macOS) or tray (Wi
 
 Short version; the details, checksums and uninstall are in [docs/install.md](docs/install.md).
 
-**macOS app**: download `OpenRecorder-0.6.0-preview.13-mac-arm64.zip` from the release (Linux and Windows: the experimental `OpenRecorder-0.6.0-preview.13-linux-x64.tar.gz` / `…-windows-x64.zip`, see [docs/install.md](docs/install.md#linux-and-windows-experimental)), unzip (the folder also holds the licence texts), move `OpenRecorder.app` to `~/Applications`, open it once (it is not notarized: see the steps), then use the menu-bar icon.
+**macOS app**: download `OpenRecorder-0.6.0-preview.14-mac-arm64.zip` from the release (Linux and Windows: the experimental `OpenRecorder-0.6.0-preview.14-linux-x64.tar.gz` / `…-windows-x64.zip`, see [docs/install.md](docs/install.md#linux-and-windows-experimental)), unzip (the folder also holds the licence texts), move `OpenRecorder.app` to `~/Applications`, open it once (it is not notarized: see the steps), then use the menu-bar icon.
 
-**Codex** (after downloading and unzipping `openrecorder-plugin-0.6.0-preview.13-darwin-arm64.zip`; add the `openrecorder` folder *inside* the unzipped archive, not the folder that contains it):
+**Codex** (after downloading and unzipping `openrecorder-plugin-0.6.0-preview.14-darwin-arm64.zip`; add the `openrecorder` folder *inside* the unzipped archive, not the folder that contains it):
 
 ```sh
 codex plugin marketplace add /path/to/unzipped/openrecorder

@@ -812,7 +812,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!reach.st
 const storedTheme=storageGet('local','or-theme');if(storedTheme&&storedTheme!=='system')document.documentElement.dataset.theme=storedTheme;
 async function init(){
   if(denied){lockedView('open');return;}
-  try{if(CONNECTION.embedded){const handshake=await rpc('ui/initialize',{appInfo:{name:'OpenRecorder',version:'0.6.0-preview.13'},appCapabilities:{availableDisplayModes:['fullscreen']},protocolVersion:'2026-01-26'});applyHost(handshake.hostContext);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},hostOrigin||'*');}}
+  try{if(CONNECTION.embedded){const handshake=await rpc('ui/initialize',{appInfo:{name:'OpenRecorder',version:'0.6.0-preview.14'},appCapabilities:{availableDisplayModes:['fullscreen']},protocolVersion:'2026-01-26'});applyHost(handshake.hostContext);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},hostOrigin||'*');}}
   catch(e){reachFail(e);}
   // The native menu's Settings… or Open Last Recording (or a ChatGPT deep link) names the page to show.
   if(pendingRoute===null)pendingRoute=hashRoute;
