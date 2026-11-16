@@ -212,7 +212,8 @@ impl PendingCompletion {
                 // What the take itself says about how far it got, if it wrote that down. Nothing is invented: a take
                 // without readable details is reported as it always was.
                 if let Ok(meta) = read_metadata(&self.directory) {
-                    let finalized = meta["finalization"]["status"] == "completed";
+                    // Closed files are closed files: a failed microphone track does not make playable video unplayable.
+                    let finalized = meta["finalization"]["status"] == "completed" || meta["finalization"]["videoFinalized"] == true;
                     data["finalized"] = json!(finalized);
                     data["capture"] = capture_summary(&meta);
                     // Files that were closed properly get the length the take measured (its `duration`, from the
@@ -758,7 +759,9 @@ mod tests {
         // A take stopped early after 128 s whose three files were still finalized (issue #3).
         let finalized = r#"{"duration":128.0,"frames":7680,"fps":60,"status":"failed","error":"The encoder stopped accepting video; what was already written is kept","finalization":{"status":"completed","error":null}}"#;
         let unfinished = r#"{"duration":128.0,"frames":7680,"fps":60,"status":"failed","finalization":{"status":"failed","error":"Encoder finalization timed out"}}"#;
-        for (name, metadata, duration) in [("abort-finalized", finalized, Some(128.0)), ("abort-unfinalized", unfinished, None)] {
+        // The preview.13 take: the microphone failed, every video file was still finalized.
+        let mic_failed = r#"{"duration":128.0,"frames":7680,"fps":60,"status":"failed","finalization":{"status":"failed","error":"The encoder stopped taking microphone audio for 2 seconds","videoFinalized":true}}"#;
+        for (name, metadata, duration) in [("abort-finalized", finalized, Some(128.0)), ("abort-unfinalized", unfinished, None), ("abort-mic-failed", mic_failed, Some(128.0))] {
             let dir = take_dir(name, Some(metadata));
             let id = json!("take-5");
             let mut host = FakeHost::new(0);

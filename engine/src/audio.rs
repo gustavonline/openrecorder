@@ -171,6 +171,9 @@ impl Session {
                         Err(e) => return Err(e),
                     }
                 };
+                // On macOS (and the BSDs) the accepted socket inherits the listener's non-blocking mode; a full send
+                // buffer then failed the take at once with "Resource temporarily unavailable" when its send buffer filled.
+                socket.set_nonblocking(false)?;
                 if let Some(origin) = origin.get() {
                     lease.samples.store((origin.elapsed().as_secs_f64() * f64::from(input.rate)) as u64, Ordering::Relaxed);
                 }
@@ -178,22 +181,26 @@ impl Session {
                     .forward
                     .lock()
                     .map_err(|_| io::Error::other("Microphone lock poisoned"))? = Some(lease);
-                socket.set_write_timeout(Some(Duration::from_secs(2)))?;
+                // A short timeout only bounds each wait, so a stop or a stuck encoder is noticed (see `send`).
+                socket.set_write_timeout(Some(WRITE_POLL))?;
                 socket.set_nodelay(true)?;
                 let mut expected = 0;
+                let mut finishing = None;
                 let silence = [0u8; 4096];
-                while !cancelled.load(Ordering::Relaxed) {
+                // Until stopped and nothing is left queued: samples captured before Stop still reach the file.
+                loop {
                     match rx.recv_timeout(Duration::from_millis(50)) {
                         Ok(chunk) => {
                             let mut gap = chunk.index.saturating_sub(expected) * 4;
                             while gap > 0 {
                                 let amount = (gap as usize).min(silence.len());
-                                socket.write_all(&silence[..amount])?;
+                                send(&mut socket, &silence[..amount], &cancelled, &mut finishing)?;
                                 gap -= amount as u64;
                             }
-                            socket.write_all(&chunk.bytes)?;
+                            send(&mut socket, &chunk.bytes, &cancelled, &mut finishing)?;
                             expected = chunk.index + (chunk.bytes.len() / 4) as u64;
                         }
+                        Err(mpsc::RecvTimeoutError::Timeout) if cancelled.load(Ordering::Relaxed) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
@@ -239,6 +246,38 @@ impl Session {
         }
         self.check()
     }
+}
+/// How long one socket write may wait before the writer looks again at whether it is stopping or stuck.
+const WRITE_POLL: Duration = Duration::from_millis(250);
+/// An encoder that takes no audio at all for this long has stopped (the same limit as the video watchdog). While
+/// finishing, the limit is shorter, so the microphone always closes inside the pipeline's own 3 s finish bound.
+const STUCK_RECORDING: Duration = Duration::from_secs(5);
+const STUCK_FINISHING: Duration = Duration::from_secs(2);
+/// Writes all of `bytes`, continuing from wherever a partial write stopped (nothing is sent twice). An encoder that is
+/// busy for a while (its socket buffers full) is waited for; one that accepts nothing for the stuck limit is an error,
+/// and so is any real socket failure (closed, reset).
+fn send(socket: &mut TcpStream, bytes: &[u8], stopping: &AtomicBool, finishing: &mut Option<Instant>) -> io::Result<()> {
+    let (mut sent, mut progress) = (0, Instant::now());
+    while sent < bytes.len() {
+        // One finish deadline across all queued chunks and silence, even if a slow reader makes partial progress.
+        if stopping.load(Ordering::Relaxed) && finishing.get_or_insert_with(Instant::now).elapsed() >= STUCK_FINISHING {
+            return Err(io::Error::other("The microphone audio did not finish draining within 2 seconds"));
+        }
+        match socket.write(&bytes[sent..]) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                sent += n;
+                progress = Instant::now();
+            }
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => {
+                if progress.elapsed() >= STUCK_RECORDING {
+                    return Err(io::Error::other("The encoder stopped taking microphone audio for 5 seconds"));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -301,5 +340,40 @@ impl Drop for TestTone {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod backpressure_tests {
+    use super::*;
+    use std::io::Read;
+    /// An encoder that stops reading the microphone for longer than the loopback buffers hold (~3 s of audio here)
+    /// and then reads again. The take must go on, and the stream must stay exactly as long as the time it covers:
+    /// whatever could not be queued meanwhile becomes silence of the same length, and nothing partly written is
+    /// written again. Before the fix the accepted socket was non-blocking and the first full buffer failed the take.
+    #[test]
+    fn a_paused_encoder_is_waited_for_and_the_stream_keeps_its_length() {
+        let tone = TestTone::new();
+        let origin = Arc::new(OnceLock::new());
+        origin.set(Instant::now()).unwrap();
+        let mut session = Session::new(tone.shared.clone(), origin.clone()).unwrap();
+        let mut encoder = TcpStream::connect(&session.address).unwrap();
+        let reader = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(3500));
+            let mut all = Vec::new();
+            encoder.read_to_end(&mut all).unwrap();
+            all.len()
+        });
+        thread::sleep(Duration::from_millis(4500));
+        assert!(session.check().is_ok(), "a busy encoder is not a failure: {:?}", session.check());
+        let finishing = Instant::now();
+        session.finish().unwrap();
+        assert!(finishing.elapsed() < Duration::from_secs(1), "and it stops promptly once it reads again");
+        let bytes = reader.join().unwrap();
+        assert_eq!(bytes % 4, 0, "whole samples only");
+        let covered = origin.get().unwrap().elapsed().as_secs_f64() * 48000.;
+        let samples = (bytes / 4) as f64;
+        assert!(samples > covered - 0.15 * 48000. && samples <= covered, "{samples} samples for {covered:.0} samples of time");
+        assert!(session.dropped.load(Ordering::Relaxed) > 0, "the pause really did overflow the queue");
     }
 }

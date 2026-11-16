@@ -7701,7 +7701,7 @@ mod menu_tests {
     }
     fn summary(status: &str, error: Option<&str>, out: Option<f64>, camera: Option<(u64, u64)>, audio: bool, originals: bool) -> serde_json::Value {
         serde_json::json!({"status":status,"error":error,"fps":60,"width":2560,"height":1440,"camera":camera.is_some(),
-            "cameraWidth":camera.map(|c| c.0),"cameraHeight":camera.map(|c| c.1),"cadence":{"outputFps":out},
+            "cameraWidth":camera.map(|c| c.0),"cameraHeight":camera.map(|c| c.1),"cadence":{"outputFps":out,"outputSeconds":60.0},
             "workload":{"quality":2560,"audio":audio,"originals":originals}})
     }
     /// A take is over: its capture.json is where the app learns what it measured.
