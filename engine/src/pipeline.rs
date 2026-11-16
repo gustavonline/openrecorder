@@ -292,7 +292,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant},
@@ -443,6 +443,8 @@ pub struct Pipeline {
     has_audio: bool,
     timing: Arc<Mutex<Timing>>,
     timing_path: PathBuf,
+    /// When the first frame was handed over: where the microphone's first sample is placed (`audio::Session`).
+    clock_origin: Arc<OnceLock<Instant>>,
 }
 impl Pipeline {
     pub fn start(
@@ -483,8 +485,9 @@ impl Pipeline {
             return Err(io::Error::other("Invalid encoder dimensions"));
         }
         let codec = super::codec();
+        let clock_origin = Arc::new(OnceLock::new());
         #[cfg(feature = "desktop-ui")]
-        let audio = audio_source.map(crate::audio::Session::new).transpose()?;
+        let audio = audio_source.map(|source| crate::audio::Session::new(source, clock_origin.clone())).transpose()?;
         #[cfg(feature = "desktop-ui")]
         let has_audio = audio.is_some();
         #[cfg(not(feature = "desktop-ui"))]
@@ -509,7 +512,14 @@ impl Pipeline {
                     .unwrap_or_else(|_| "/dev/dri/renderD128".into()),
             ]);
         }
+        // Each frame is timestamped when the helper reads it, in microseconds, instead of by its index at a fixed
+        // rate: a frame that comes late, or a tick the sampler skipped because the encoder was still busy, keeps its
+        // real place in time rather than pulling every later frame earlier against the live audio (issue #3). The
+        // `-framerate` here only sets that time base; the outputs pass timestamps through (`-fps_mode passthrough`)
+        // and never duplicate frames to fill a gap.
         cmd.args([
+            "-use_wallclock_as_timestamps",
+            "1",
             "-thread_queue_size",
             "1",
             "-probesize",
@@ -528,7 +538,7 @@ impl Pipeline {
                 if packed_camera { 2 * h + ch } else { h }
             ),
             "-framerate",
-            &fps.to_string(),
+            "1000000",
             "-i",
             "pipe:0",
         ]);
@@ -570,20 +580,16 @@ impl Pipeline {
                 graph.push_str(&format!(";[{name}]format=yuv420p[{name}_out]"));
             }
         }
-        if has_audio {
-            if packed_camera {
-                graph.push_str(";[1:a]asplit=2[screen_audio][recording_audio]");
-            } else {
-                graph.push_str(";[1:a]anull[recording_audio]");
-            }
-        }
+        // The microphone is mapped straight to the outputs that carry it and stays out of this graph: one graph reads
+        // one input at a time, the one its oldest output waits for, and live PCM arrives in ~0.1 s packets, so a
+        // shared graph stopped reading video until each audio packet had arrived.
         cmd.args(["-filter_complex", &graph]);
         for name in &names {
-            cmd.args(["-map", &format!("[{name}_out]"), "-c:v", codec]);
+            cmd.args(["-map", &format!("[{name}_out]"), "-c:v", codec, "-fps_mode", "passthrough"]);
             if has_audio && *name != "camera" {
                 cmd.args([
                     "-map",
-                    &format!("[{name}_audio]"),
+                    "1:a",
                     "-c:a",
                     "aac",
                     "-b:a",
@@ -676,6 +682,7 @@ impl Pipeline {
             has_audio,
             timing,
             timing_path: dir.join("encoder-timing.json"),
+            clock_origin,
             width: w,
             height: h,
             camera_width: cw,
@@ -754,6 +761,7 @@ impl Pipeline {
     fn send(&mut self, Prepared { job, built: prepared }: Prepared) -> io::Result<()> {
         let jobs = self.jobs.as_ref().ok_or_else(|| io::Error::other("Encoder stopped"))?;
         let handoff = Instant::now();
+        self.clock_origin.get_or_init(|| handoff);
         let sent = jobs.send(job);
         let waited = handoff.elapsed();
         self.timing.lock().unwrap_or_else(|e| e.into_inner()).record_sampler(prepared, waited);
@@ -1676,22 +1684,64 @@ mod throughput_tests {
         assert_eq!(single.encoder_summary()["encoders"].as_object().unwrap().keys().collect::<Vec<_>>(), ["recording"]);
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+/// Issue #3 against the real helper: a sampler held up for 0.6 s (or an encoder that is still busy) skips ticks, and
+/// the files keep that time. The video is as long as the take, the pause is a pause, and the sound ends with the
+/// picture. With frames timestamped by their index the video came out 0.6 s short and every later frame early.
+#[cfg(all(test, feature = "desktop-ui"))]
+mod real_time_tests {
+    use super::*;
     #[test]
-    fn a_heavy_take_is_never_moved_off_the_hardware_encoder_by_a_budget_rule() {
-        // The owner's 2560x1440 / 60 fps take with a camera and originals: its demand is a diagnostic, not a switch.
-        let rate = hardware_megapixels_per_second(2560, 1440, 900, 720, 60, true);
-        assert!((rate - 481.0).abs() < 1.0, "{rate}");
-        // The argument builder gives every output the platform's encoder with the bitrate and options as before.
-        let source = include_str!("pipeline.rs").split("#[cfg(all(test, unix))]").next().unwrap();
-        for needle in [
-            "cmd.args([\"-map\", &format!(\"[{name}_out]\"), \"-c:v\", codec]);",
-            "[0:v]split=3[s0][c0][r0];[s0]crop={w}:{h}:0:0[screen];[c0]crop={cw}:{ch}:0:{h}[camera];[r0]crop={w}:{h}:0:{}[recording]",
-            "\"-movflags\",\n                \"+frag_keyframe+empty_moov+default_base_moof\",",
-        ] {
-            assert!(source.contains(needle), "{needle}");
+    #[ignore = "requires explicitly supplied bundled helper and development ffprobe"]
+    fn a_pause_in_frames_stays_a_pause_and_the_picture_ends_with_the_sound() {
+        let helper = std::env::var("OPENRECORDER_FFMPEG").expect("Set bundled fixture helper");
+        let probe = std::env::var("OPENRECORDER_TEST_FFPROBE").expect("Set development ffprobe");
+        let dir = std::env::temp_dir().join(format!("recorder-real-time-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let tone = crate::audio::TestTone::new();
+        let (w, h, cw, ch) = (320, 180, 96, 72);
+        let mut encoder = Pipeline::start_config(&helper, &dir, w, h, cw, ch, Some(tone.shared.clone()), true, 60).unwrap();
+        let (screen, camera) = (Arc::new([40u8, 50, 60, 255].repeat(w * h)), [60u8, 80, 100, 255].repeat(cw * ch));
+        let period = Duration::from_secs_f64(1. / 60.);
+        let (epoch, mut tick, mut frames) = (Instant::now(), 0, 0);
+        let mut paused = false;
+        while epoch.elapsed() < Duration::from_secs(4) {
+            if tick >= 90 && !paused {
+                paused = true;
+                thread::sleep(Duration::from_millis(600));
+            }
+            encoder.submit(&screen, Some(&camera)).unwrap();
+            frames += 1;
+            tick = crate::capture::next_tick(tick, epoch.elapsed(), period);
+            thread::sleep((epoch + period.mul_f64(tick as f64)).saturating_duration_since(Instant::now()));
         }
-        for gone in ["libx264\" } else { offload", "offload_threads", "HARDWARE_BUDGET", "P9_HW_BUDGET", "plan_encoders", "P9_NO_REALTIME"] {
-            assert!(!source.contains(gone), "{gone} must not ship");
+        let wall = epoch.elapsed().as_secs_f64();
+        encoder.finish().unwrap();
+        drop(tone);
+        let ffprobe = |file: &Path, entries: &str| -> serde_json::Value {
+            let out = Command::new(&probe).args(["-v", "error", "-show_entries", entries, "-of", "json"]).arg(file).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            serde_json::from_slice(&out.stdout).unwrap()
+        };
+        for name in ["screen", "camera", "recording"] {
+            let file = dir.join(format!("{name}.mp4"));
+            let streams = ffprobe(&file, "stream=codec_type,duration")["streams"].clone();
+            let duration = |kind: &str| streams.as_array().unwrap().iter().find(|s| s["codec_type"] == kind).map(|s| s["duration"].as_str().unwrap().parse::<f64>().unwrap());
+            let mut pts: Vec<f64> = ffprobe(&file, "packet=codec_type,pts_time")["packets"].as_array().unwrap().iter()
+                .filter(|p| p["codec_type"] == "video").map(|p| p["pts_time"].as_str().unwrap().parse().unwrap()).collect();
+            pts.sort_by(f64::total_cmp);
+            assert_eq!(pts.len(), frames, "{name}: every frame handed over, no duplicates");
+            let video = duration("video").unwrap();
+            assert!((video - wall).abs() < 0.15, "{name}: video {video} s for a {wall} s take");
+            let pause = pts.windows(2).map(|p| p[1] - p[0]).fold(0., f64::max);
+            assert!((0.55..0.8).contains(&pause), "{name}: the 0.6 s pause is in the file: {pause}");
+            if let Some(audio) = duration("audio") {
+                assert!((audio - video).abs() < 0.1, "{name}: audio {audio} s, video {video} s");
+            } else {
+                assert_eq!(name, "camera");
+            }
         }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

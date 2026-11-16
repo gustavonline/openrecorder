@@ -59,7 +59,9 @@ addEventListener('message',event=>{
   if(message.method==='ui/notifications/host-context-changed')applyHost(message.params);
   if(message.method==='ui/resource-teardown'){clearTimeout(pollTimer);clearInterval(tickTimer);$('player').pause();if(message.id)parent.postMessage({jsonrpc:'2.0',id:message.id,result:{}},hostOrigin||'*');}
 });
-function applyHost(context){const c=context?.hostContext||context;if(c?.theme&&!storageGet('local','or-theme'))document.documentElement.dataset.theme=c.theme;const insets=c?.safeAreaInsets;if(insets)document.body.style.padding=`${insets.top||0}px ${insets.right||0}px ${insets.bottom||0}px ${insets.left||0}px`;}
+// ChatGPT's deep link to this view (`openai/deepLink`, an app-relative path) names a page: /, /settings or /last.
+let pendingRoute=null;
+function applyHost(context){const c=context?.hostContext||context;const link=c?.['openai/deepLink']?.url;if(isStr(link)){const route=link.split('?')[0].replace(/^\//,'');if(['','settings','last'].includes(route)){if(state)followRoute(route);else pendingRoute=route;}}if(c?.theme&&!storageGet('local','or-theme'))document.documentElement.dataset.theme=c.theme;const insets=c?.safeAreaInsets;if(insets)document.body.style.padding=`${insets.top||0}px ${insets.right||0}px ${insets.bottom||0}px ${insets.left||0}px`;}
 // Every request has an application deadline that covers the response body too, so a host that accepts a connection
 // and then stalls can never leave the page "busy" for ever. Reads time out quickly and are retried (2, 5, 15 s, then
 // manually). A timed-out change is UNCERTAIN: the host may have applied it, so it is never replayed automatically
@@ -68,7 +70,7 @@ const deadlines={read:7000,change:20000,share:45000};
 const uncertainText='OpenRecorder didn’t answer in time, so it’s unknown whether the change was applied. Showing what is saved.';
 function markUncertain(error,op,own){
   // A caller that reads the host back itself (settings, share) passes own=true; everyone else gets one refresh.
-  if(op!=='state'&&error.unreachable){error.uncertain=true;error.detail=error.detail||error.message;error.message=uncertainText;if(!own&&typeof refresh==='function')Promise.resolve().then(()=>void refresh());}
+  if(!['state','home-wait','home-done'].includes(op)&&error.unreachable){error.uncertain=true;error.detail=error.detail||error.message;error.message=uncertainText;if(!own&&typeof refresh==='function')Promise.resolve().then(()=>void refresh());}
   return error;
 }
 async function fetchWithin(url,options,ms){
@@ -90,7 +92,7 @@ const recordingShape=shape({id:nonEmpty,title:isStr,status:isStr,files:arrayOf(f
 const folderShape=shape({id:nonEmpty,name:isStr});
 // Every key here is always serialized by the host (defaults plus normalization): an answer without one is incomplete, so
 // it can neither replace the settings nor prove that a change was or was not saved.
-const settingsShape=shape({theme:isStr,quality:isNumber,fps:isNumber,keepOriginals:isBool,mirror:isBool,cameraShape:isStr,cameraSize:isNumber,countdownSeconds:isNumber,rememberInputs:isBool},{camera:isBool,microphone:isBool,showCamera:isBool,fpsChosen:isBool});
+const settingsShape=shape({theme:isStr,quality:isNumber,fps:isNumber,keepOriginals:isBool,mirror:isBool,cameraShape:isStr,cameraSize:isNumber,countdownSeconds:isNumber,rememberInputs:isBool},{camera:isBool,microphone:isBool,showCamera:isBool,fpsChosen:isBool,homeTarget:isStr});
 const activeShape=shape({status:isStr},{id:isStr,startedAt:isNumber,countdownRemaining:isNumber});
 // The app's own report of capture (phase, generation, devices). Optional: an older host sends none, and Home then shows the
 // previous New recording button. Only well-typed content is accepted, so a malformed report can never invent a timer.
@@ -177,7 +179,7 @@ function schedule(){
 }
 async function refresh(){
   if(denied)return;if(busy){queued=true;return;}
-  busy=true;try{commitState(await api('state'));reachOk();render();}catch(e){reachFail(e);}finally{busy=false;}
+  busy=true;try{commitState(await api('state'));reachOk();render();if(pendingRoute!==null){const route=pendingRoute;pendingRoute=null;followRoute(route);}}catch(e){reachFail(e);}finally{busy=false;}
   if(queued){queued=false;return refresh();}schedule();
 }
 const shareLink=s=>s.url||s.shareUrl||s.link||'';
@@ -569,6 +571,7 @@ function choices(key,fallback,label){
 }
 const settingDefs=[
   {key:'theme',pane:'general',label:'Appearance',options:()=>[['system','System'],['light','Light'],['dark','Dark']]},
+  {key:'homeTarget',pane:'general',label:'Open Home in',optional:true,help:'Where the menu bar’s Open Home and Settings… open. A page already open there is reused.',options:()=>choices('homeTarget',['system','safari','chrome','firefox','edge','arc','brave','codex'],v=>({system:'Default browser',safari:'Safari',chrome:'Google Chrome',firefox:'Firefox',edge:'Microsoft Edge',arc:'Arc',brave:'Brave',codex:'ChatGPT'}[v]||String(v)))},
   {key:'quality',pane:'recording',label:'Resolution',help:'Maximum long edge. The screen’s aspect ratio is preserved.',options:()=>choices('quality',resolutions.map(r=>r[0]),v=>resolutions.find(r=>r[0]===v)?.[1]||`${v}`)},
   {key:'fps',pane:'recording',label:'Frame rate',options:()=>choices('fps',[24,30,60],v=>`${v} fps`)},
   {key:'keepOriginals',pane:'recording',label:'Keep originals',toggle:true,help:'Saves separate screen and camera files next to the combined MP4. Uses more disk. Screen-only recordings never duplicate the screen.'},
@@ -809,13 +812,40 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!reach.st
 const storedTheme=storageGet('local','or-theme');if(storedTheme&&storedTheme!=='system')document.documentElement.dataset.theme=storedTheme;
 async function init(){
   if(denied){lockedView('open');return;}
-  try{if(CONNECTION.embedded){const handshake=await rpc('ui/initialize',{appInfo:{name:'OpenRecorder',version:'0.6.0-preview.12'},appCapabilities:{availableDisplayModes:['fullscreen']},protocolVersion:'2026-01-26'});applyHost(handshake.hostContext);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},hostOrigin||'*');}}
+  try{if(CONNECTION.embedded){const handshake=await rpc('ui/initialize',{appInfo:{name:'OpenRecorder',version:'0.6.0-preview.13'},appCapabilities:{availableDisplayModes:['fullscreen']},protocolVersion:'2026-01-26'});applyHost(handshake.hostContext);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},hostOrigin||'*');}}
   catch(e){reachFail(e);}
+  // The native menu's Settings… or Open Last Recording (or a ChatGPT deep link) names the page to show.
+  if(pendingRoute===null)pendingRoute=hashRoute;
   await refresh();
-  // The native menu's Settings… opens Home at /settings: the same Settings the sidebar opens.
-  if(hashRoute==='settings'&&state)openSettings();
-  // The native menu's Open Last Recording opens the newest take that stopped early; nothing starts or changes.
-  if(hashRoute==='last'&&state){const r=newestStopped();if(r)openRecording(r.id);}
+  void listenForHome();
+}
+// A page asked for from outside: Home, its Settings, or the newest take that stopped early. Views only; nothing starts.
+function followRoute(route){
+  if(!state)return false;
+  if(route==='settings'){openSettings();return true;}
+  if($('settingsDialog').open)$('settingsDialog').close();
+  if(route==='last'){const r=newestStopped();if(r)openRecording(r.id);}else if(selectedId)closeRecording();
+  return true;
+}
+// A Home page the library opened in a browser listens for the next Open Home or Settings… so that press moves this page
+// instead of opening another tab. It names the target that opened it (kept for this tab across a reload), and confirms
+// each change once it shows it; unconfirmed, the library opens Home anew. A page opened by hand never listens.
+const homeTargets=['system','safari','chrome','firefox','edge','arc','brave'];
+const homeVia=CONNECTION.embedded?null:[hashParts[2],storageGet('session','or-via')].find(v=>homeTargets.includes(v))||null;
+if(homeVia)storageSet('session','or-via',homeVia);
+const homePage=Array.from({length:16},()=>Math.floor(Math.random()*36).toString(36)).join('');
+async function listenForHome(){
+  if(!homeVia||denied)return;
+  for(;;){
+    if(denied)return;
+    if(reach.stopped){await new Promise(ok=>setTimeout(ok,5000));continue;}
+    const asked=Date.now();
+    try{const r=await api('home-wait',{page:homePage,via:homeVia});
+      if(isStr(r?.navigate)&&isNumber(r.id)&&followRoute(r.navigate)){await api('home-done',{page:homePage,id:r.id});continue;}}
+    catch{}
+    // An answer that came back at once without a page (an older host, or an error) is not asked again straight away.
+    if(Date.now()-asked<1000)await new Promise(ok=>setTimeout(ok,5000));
+  }
 }
 
 // ---- Capture controls (the person's own) ----------------------------------------------------------------------------
@@ -1076,7 +1106,7 @@ function closeHostMenu(){hostMenuOpen=false;$('hostMenu').hidden=true;$('hostMen
 $('hostMenuButton').onclick=()=>hostMenuOpen?closeHostMenu():openHostMenu();
 $('hostMenu').onclick=async e=>{
   const b=e.target.closest('[data-host]');if(!b)return;closeHostMenu();
-  if(b.dataset.host==='browser'){try{await api('open-library');toast('Opening the Library in your browser.');}catch(err){showError(err);}}
+  if(b.dataset.host==='browser'){try{await api('open-library',{target:'browser'});toast('Opening the Library in your browser.');}catch(err){showError(err);}}
   else if(b.dataset.host==='reload'){resetMedia();gridSignature='';void refresh();}
   else if(b.dataset.host==='settings')openSettings();
 };
@@ -1315,7 +1345,7 @@ $('player').addEventListener('error',()=>void playerFailed());
 function fpsCapabilityMarkup(){
   const f=state.capture?.capabilities?.fps60;if(!f||!captureKnown())return '';
   const status=['unknown','qualified','failed-last'].includes(f.status)?f.status:'unknown';
-  const words={unknown:'60 fps hasn’t been measured on this computer for this setup (screen, camera, microphone and originals as they are now). You can still choose it; a recording stops with the reason if it can’t keep up.',qualified:'A recording of this setup on this computer kept up at 60 fps. Each recording still measures its delivered rate.',['failed-last']:'Your last 60 fps recording of this setup couldn’t keep up. You can still choose it, or use 30 fps.'}[status];
+  const words={unknown:'60 fps hasn’t been measured on this computer for this setup (screen, camera, microphone and originals as they are now). You can still choose it; if this computer can’t keep up, the recording continues at the rate it manages and says so.',qualified:'A recording of this setup on this computer kept up at 60 fps. Each recording still measures its delivered rate.',['failed-last']:'Your last 60 fps recording of this setup couldn’t keep up. You can still choose it, or use 30 fps.'}[status];
   const measured=isNumber(f.measuredFps)?` Measured ${f.measuredFps.toFixed(1)} fps.`:'';
   const e=isObj(f.encoder)?f.encoder:null;
   const encoder=e?({qualified:'The encoder check passed on test frames. That is encoder capacity only; it doesn’t show this setup will keep up.',['failed-last']:'The encoder check couldn’t keep up with test frames.',unavailable:'The video encoder didn’t accept 60 fps in the last check.'}[e.status]||''):'';

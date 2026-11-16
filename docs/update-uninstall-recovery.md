@@ -30,7 +30,7 @@ Download the new release, verify its checksum, quit OpenRecorder, and replace th
 
 ## Recovery
 
-- **A take stopped early** (the app quit, the machine slept, the encoder could not keep up): the files already written are kept and Home says "Recording stopped early. Available files were kept.". Open the recording; **Technical details** shows the reason. A take with no proof it was finished has no player and no duration, but its files are in the take's folder.
+- **A take stopped early** (the app quit, the machine slept, the encoder stopped accepting video): the files already written are kept and Home says "Recording stopped early. Available files were kept.". Open the recording; **Technical details** shows the reason. A take whose files were still closed properly shows its length as the recorder measured it; a take with no proof it was finished has no player and no duration, but its files are in the take's folder.
 - **Home shows no recordings or is unreachable**: choose **Quit OpenRecorder**, then open it again. One library host owns the library at a time, enforced by an operating-system lock, so a second one never starts over it, and a crashed host releases the lock by itself.
 - **No tray (Linux)**: OpenRecorder opens Home once and Settings → About says "Controls: Home".
 - **Check the install**: `OpenRecorder --doctor` (macOS: `OpenRecorder.app/Contents/MacOS/OpenRecorder --doctor`) prints one JSON object about the bundled media helper without touching any device.

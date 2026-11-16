@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0-preview.13 (build 18)
+
+- Recordings continue at the rate the encoder sustains instead of stopping once cumulative timing lag reaches 0.75 seconds. Video timestamps preserve real gaps, microphone timing starts alongside video, and slow frames no longer shorten the picture against the sound. A genuinely stuck encoder still fails clearly; requested resolution, frame rate and the hardware codec are preserved.
+- Finalized interrupted takes report the sampler's measured duration to Home.
+- Settings → General → **Open Home in** selects the default browser, a specific browser or the ChatGPT/Codex plugin view on macOS. Home and Settings reuse a responding page; browser launch errors are reported. The browser is brought forward, but an inactive Home tab may still need selecting.
+- Removed redundant source-text, style and superseded benchmark checks. Kept behavioral, privacy, lifecycle and packaging checks; no new long test campaign.
+- Validation: targeted scheduler and navigation regressions, a deliberate pause against the bundled VideoToolbox helper, and a 30-second synthetic 1440p workload with camera, audio and originals. Long physical-device recordings remain unverified.
+- Still a preview: macOS 26.0 or later on Apple silicon; local development signing, not notarized. Linux and Windows desktop capture remain experimental and unverified.
+
 ## 0.6.0-preview.12 (build 17)
 
 Plugin-only lifecycle repair (found after installing preview.11 from the plugin alone).

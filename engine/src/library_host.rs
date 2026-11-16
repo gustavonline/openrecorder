@@ -81,7 +81,7 @@ pub fn shutdown() {
         }
     }
 }
-const VERSION: &str = "0.6.0-preview.12";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 // The only operations an agent may request through MCP. Every `native-*` op is deliberately absent. No
 // operation, here or over HTTP, asks the toolbar to activate camera or microphone.
 const PUBLIC_OPS: &[&str] = &["state", "open-studio", "open-library", "settings", "folder", "update", "stop", "reveal", "open-file", "share", "unshare", "quit"];
@@ -296,7 +296,7 @@ pub fn home() -> PathBuf {
     }
 }
 fn defaults() -> Value {
-    json!({"quality":1920,"fps":30,"camera":false,"microphone":false,"systemAudio":false,"keepOriginals":true,"cameraSize":168,"cameraShape":"rounded","mirror":true,"showCamera":true,"rememberInputs":true,"countdownSeconds":3,"fpsChosen":false,"source":"display","theme":"system","cameraDeviceId":null,"microphoneDeviceId":null})
+    json!({"quality":1920,"fps":30,"camera":false,"microphone":false,"systemAudio":false,"keepOriginals":true,"cameraSize":168,"cameraShape":"rounded","mirror":true,"showCamera":true,"rememberInputs":true,"countdownSeconds":3,"fpsChosen":false,"source":"display","theme":"system","homeTarget":"system","cameraDeviceId":null,"microphoneDeviceId":null})
 }
 // Accepted values, kept in one place so validation, migration and the contract document agree. The old camera
 // sizes and the three older shapes stay valid next to the new ones.
@@ -842,6 +842,7 @@ impl Store {
                                 .as_str()
                                 .is_some_and(|n| ["system", "light", "dark"].contains(&n)),
                             "cameraShape" => v.as_str().is_some_and(|n| CAMERA_SHAPES.contains(&n)),
+                            "homeTarget" => v.as_str().is_some_and(|n| home_app(n).is_some()),
                             "camera" | "microphone" | "keepOriginals" | "mirror" | "showCamera" | "rememberInputs" | "fpsChosen" => v.is_boolean(),
                             _ => continue,
                         };
@@ -1267,8 +1268,107 @@ struct Host {
     media_key: String,
     // Set under the store lock when Quit is accepted, so a take cannot begin after the active check.
     quit_requested: std::sync::atomic::AtomicBool,
+    homes: Mutex<Homes>,
+    homes_changed: Condvar,
+    opening_home: Mutex<()>,
 }
 impl Host {
+    /// Opens Home where the person chose. A browser that already shows Home is moved to `route` instead of getting
+    /// another tab, but only once that page confirms it; otherwise Home opens anew there. ChatGPT gets its documented
+    /// deep link to the global OpenRecorder view, which it reuses.
+    fn open_home(&self, target: &str, route: &'static str) -> Result<Value, String> {
+        // A second click waits for the first page to register, then navigates that page too.
+        let _opening = self.opening_home.lock().unwrap();
+        let app = home_app(target).ok_or("Unknown target")?;
+        let mac = cfg!(target_os = "macos");
+        if target == "codex" {
+            if !mac {
+                return Err("Opening Home in ChatGPT is only available on macOS. Choose a browser in Settings.".into());
+            }
+            let link = codex_home_link(&codex_marketplace()?, route);
+            run_opener("/usr/bin/open", &["-b", app, &link], true, OPENER_WAIT).map_err(|e| format!("ChatGPT could not open Home: {e}"))?;
+            return Ok(json!({"opened":true,"reused":false,"target":target}));
+        }
+        if !app.is_empty() && !mac {
+            return Err("Choosing a browser is only available on macOS. Choose System default in Settings.".into());
+        }
+        let browser = if app.is_empty() { default_browser() } else { Some(app.to_owned()) };
+        if browser.is_some() && self.move_open_home(target, route) {
+            run_opener("/usr/bin/open", &["-b", browser.as_deref().unwrap()], true, OPENER_WAIT).map_err(|e| format!("Home was moved, but its browser could not be brought forward: {e}"))?;
+            return Ok(json!({"opened":true,"reused":true,"target":target}));
+        }
+        let url = format!("{}/#{}/{}/{}", self.origin, self.key, route.trim_start_matches('/'), target);
+        match (mac, app.is_empty()) {
+            (true, true) => run_opener("/usr/bin/open", &[&url], true, OPENER_WAIT),
+            (true, false) => run_opener("/usr/bin/open", &["-b", app, &url], true, OPENER_WAIT),
+            _ => open(&url, false),
+        }
+        .map_err(|e| format!("Home could not be opened: {}", private_opener_error(&e, &self.key)))?;
+        let homes = self.homes.lock().unwrap();
+        drop(self.homes_changed.wait_timeout_while(homes, HOME_CONFIRM, |h| !h.listening.iter().any(|(_, v, since)| v == target && since.elapsed() < HOME_WAIT)).unwrap());
+        Ok(json!({"opened":true,"reused":false,"target":target}))
+    }
+    /// A browser Home page waits here, at most `HOME_WAIT`, for a page to show, and asks again as soon as it is answered.
+    fn home_wait(&self, d: &Value) -> Result<Value, String> {
+        let page = home_page_id(&d["page"])?;
+        let via = d["via"].as_str().filter(|v| *v != "codex" && home_app(v).is_some()).ok_or("Unknown target")?;
+        let mut homes = self.homes.lock().unwrap();
+        homes.listening.retain(|(p, ..)| *p != page);
+        homes.listening.push((page.clone(), via.to_owned(), std::time::Instant::now()));
+        if homes.listening.len() > 16 {
+            homes.listening.remove(0);
+        }
+        self.homes_changed.notify_all();
+        let deadline = std::time::Instant::now() + HOME_WAIT;
+        loop {
+            if let Some((id, _, route)) = homes.pending.as_ref().filter(|(_, p, _)| *p == page) {
+                return Ok(json!({"navigate":route.trim_start_matches('/'),"id":id}));
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(json!({"navigate":null}));
+            }
+            homes = self.homes_changed.wait_timeout(homes, left).unwrap().0;
+        }
+    }
+    /// The page confirms it now shows the route it was given.
+    fn home_done(&self, d: &Value) -> Result<Value, String> {
+        let page = home_page_id(&d["page"])?;
+        let id = d["id"].as_u64().ok_or("Missing id")?;
+        let mut homes = self.homes.lock().unwrap();
+        if homes.pending.as_ref().is_some_and(|(n, p, _)| *n == id && *p == page) {
+            homes.pending = None;
+            homes.done = id;
+            self.homes_changed.notify_all();
+        }
+        Ok(json!({}))
+    }
+    /// Gives the most recent listening Home page of this target the route. True only when that page confirmed it in
+    /// time; a page that did not is forgotten, so the caller opens Home anew instead of dropping the request.
+    fn move_open_home(&self, via: &str, route: &'static str) -> bool {
+        let mut homes = self.homes.lock().unwrap();
+        let listening = HOME_WAIT + Duration::from_secs(5);
+        let Some(page) = homes.listening.iter().rev().find(|(_, v, since)| v == via && since.elapsed() < listening).map(|(p, ..)| p.clone()) else {
+            return false;
+        };
+        homes.next += 1;
+        let id = homes.next;
+        homes.pending = Some((id, page.clone(), route));
+        self.homes_changed.notify_all();
+        let deadline = std::time::Instant::now() + HOME_CONFIRM;
+        while homes.done < id {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                if homes.pending.as_ref().is_some_and(|(n, ..)| *n == id) {
+                    homes.pending = None;
+                }
+                homes.listening.retain(|(p, ..)| *p != page);
+                return false;
+            }
+            homes = self.homes_changed.wait_timeout(homes, left).unwrap().0;
+        }
+        true
+    }
     fn quitting(&self) -> bool {
         self.quit_requested.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -1687,12 +1787,19 @@ impl Host {
             "open-library" => {
                 // The route is a fixed word, never free text: Home, its Settings, or the newest stopped recording.
                 let route = library_route(&d["route"])?;
-                open(&format!("{}/#{}{}", self.origin, self.key, route), false)?;
-                Ok(json!({"opened":true}))
+                // Home's own "open in a browser" names the browser, so it can never send Home back into ChatGPT.
+                let target = match &d["target"] {
+                    Value::Null => self.store.lock().unwrap().config["settings"]["homeTarget"].as_str().unwrap_or("system").to_owned(),
+                    t if t == "browser" => "system".to_owned(),
+                    _ => return Err("Unknown target".into()),
+                };
+                self.open_home(&target, route)
             }
+            "home-wait" => self.home_wait(&d),
+            "home-done" => self.home_done(&d),
             "open-studio" => self.open_studio().map(|r| self.with_recorder(r)),
             "open-recorder" => self.open_recorder_with(process_liveness, launch_desktop),
-            "open-privacy-settings" => self.open_privacy_settings_with(&d, |program, target| run_opener(program, target, opener_exit_is_result(program), OPENER_WAIT)),
+            "open-privacy-settings" => self.open_privacy_settings_with(&d, |program, target| run_opener(program, &[target], opener_exit_is_result(program), OPENER_WAIT)),
             _ => self.store.lock().unwrap().action(op, d),
         }
     }
@@ -1701,6 +1808,83 @@ fn cloudflared() -> PathBuf {
     std::env::var_os("OPENRECORDER_CLOUDFLARED").map(PathBuf::from).unwrap_or_else(|| {
         if cfg!(target_os = "macos") { "/opt/homebrew/bin/cloudflared".into() } else { "cloudflared".into() }
     })
+}
+/// Where Home opens (`homeTarget`): the system's default browser, a browser from this fixed list (macOS application ids,
+/// opened with `open -b`), or OpenRecorder inside ChatGPT (`com.openai.codex`). A preference names one of these words; no
+/// path, program or command ever comes from it.
+const HOME_TARGETS: [(&str, &str); 8] = [("system", ""), ("safari", "com.apple.Safari"), ("chrome", "com.google.Chrome"), ("firefox", "org.mozilla.firefox"),
+    ("edge", "com.microsoft.edgemac"), ("arc", "company.thebrowser.Browser"), ("brave", "com.brave.Browser"), ("codex", "com.openai.codex")];
+fn home_app(target: &str) -> Option<&'static str> {
+    HOME_TARGETS.iter().find(|(t, _)| *t == target).map(|(_, app)| *app)
+}
+/// Browser Home pages listening for a page change: (page id, the target that opened it, when its current wait began).
+/// At most one change is in flight, `pending` (number, page, route), until that page confirms it.
+#[derive(Default)]
+struct Homes {
+    listening: Vec<(String, String, std::time::Instant)>,
+    pending: Option<(u64, String, &'static str)>,
+    done: u64,
+    next: u64,
+}
+const HOME_WAIT: Duration = Duration::from_secs(15);
+const HOME_CONFIRM: Duration = Duration::from_secs(2);
+fn home_page_id(v: &Value) -> Result<String, String> {
+    v.as_str().filter(|s| (8..=64).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphanumeric())).map(str::to_owned).ok_or_else(|| "Invalid page".into())
+}
+/// The installed plugin's marketplace, from the Codex configuration's `[plugins."openrecorder@<marketplace>"]` table.
+fn codex_marketplace() -> Result<String, String> {
+    let dir = std::env::var_os("CODEX_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")));
+    let text = dir.and_then(|d| fs::read_to_string(d.join("config.toml")).ok()).unwrap_or_default();
+    enabled_codex_marketplace(&text)
+        .ok_or_else(|| "OpenRecorder is not installed in ChatGPT on this computer. Choose a browser in Settings.".into())
+}
+fn enabled_codex_marketplace(text: &str) -> Option<String> {
+    let (mut selected, mut enabled) = (None, true);
+    // Codex writes each plugin as its own table; ignore an old, disabled installation.
+    for line in text.lines().chain(std::iter::once("[")) {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            if enabled && selected.is_some() { return selected; }
+            selected = line.strip_prefix("[plugins.\"openrecorder@").and_then(|s| s.strip_suffix("\"]"))
+                .filter(|m| !m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c))).map(str::to_owned);
+            enabled = true;
+        } else if let Some((name, value)) = line.split_once('=') {
+            if name.trim() == "enabled" { enabled = value.trim() == "true"; }
+        }
+    }
+    None
+}
+fn private_opener_error(error: &str, key: &str) -> String {
+    error.replace(key, "[private link]").chars().take(200).collect()
+}
+/// The documented desktop deep link to the global OpenRecorder view at an app-relative path:
+/// `codex://plugins/{plugin}@{marketplace}/app/{tool}?path={percent-encoded path}`.
+fn codex_home_link(marketplace: &str, route: &str) -> String {
+    let path = if route.is_empty() { "/" } else { route };
+    let encoded: String = path.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    format!("codex://plugins/openrecorder@{marketplace}/app/openrecorder_home?path={encoded}")
+}
+/// Ask LaunchServices through NSWorkspace, including Safari when no explicit preference was ever written.
+fn default_browser() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+        let pool: *mut Object = msg_send![class!(NSAutoreleasePool), new];
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let text: *mut Object = msg_send![class!(NSString), stringWithUTF8String:b"https://example.com/\0".as_ptr().cast::<std::ffi::c_char>()];
+        let url: *mut Object = msg_send![class!(NSURL), URLWithString:text];
+        let application: *mut Object = msg_send![workspace, URLForApplicationToOpenURL:url];
+        let result = if application.is_null() { None } else {
+            let bundle: *mut Object = msg_send![class!(NSBundle), bundleWithURL:application];
+            let identifier: *mut Object = msg_send![bundle, bundleIdentifier];
+            let chars: *const std::ffi::c_char = msg_send![identifier, UTF8String];
+            if chars.is_null() { None } else { std::ffi::CStr::from_ptr(chars).to_str().ok().map(str::to_owned) }
+        };
+        let _: () = msg_send![pool, drain];
+        result
+    }
+    #[cfg(not(target_os = "macos"))]
+    { None }
 }
 /// The page `open-library` may open: a fixed word, never free text or a path.
 fn library_route(route: &Value) -> Result<&'static str, String> {
@@ -1745,8 +1929,8 @@ fn opener_exit_is_result(program: &str) -> bool {
 /// Runs the fixed opener program with its one argument and waits, bounded, for it to finish: a program that starts and then
 /// fails is a failure the person sees, not a success. Only this helper process is ever signalled (when it overruns), and it is
 /// always reaped; no other process is touched.
-fn run_opener(program: &str, target: &str, exit_is_result: bool, wait: Duration) -> Result<(), String> {
-    let mut child = Command::new(program).arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+fn run_opener(program: &str, args: &[&str], exit_is_result: bool, wait: Duration) -> Result<(), String> {
+    let mut child = Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -1760,7 +1944,7 @@ fn run_opener(program: &str, target: &str, exit_is_result: bool, wait: Duration)
                 }
                 let said = said.trim();
                 let code = status.code().map_or("a signal".to_owned(), |c| c.to_string());
-                return Err(if said.is_empty() { format!("it exited with {code}") } else { format!("it exited with {code}: {}", said.chars().take(200).collect::<String>()) });
+                return Err(if said.is_empty() { format!("it exited with {code}") } else { format!("it exited with {code}: {}", said) });
             }
             Ok(None) if started.elapsed() >= wait => {
                 let _ = child.kill();
@@ -1989,6 +2173,9 @@ pub fn start() -> Result<Value, String> {
         key: key.clone(),
         media_key: token(),
         quit_requested: std::sync::atomic::AtomicBool::new(false),
+        homes: Mutex::default(),
+        homes_changed: Condvar::new(),
+        opening_home: Mutex::new(()),
     });
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let helper = std::env::var("OPENRECORDER_FFMPEG")
@@ -2084,7 +2271,7 @@ fn request_raw(c: &Value, op: &str, data: Value) -> Result<Value, HostError> {
     let (origin, key) = connection(c)?;
     ureq::post(&format!("{origin}/api/action"))
         .set("Authorization", &format!("Bearer {key}"))
-        .timeout(Duration::from_secs(if op == "share" { 40 } else { 5 }))
+        .timeout(Duration::from_secs(if op == "share" { 40 } else if op == "open-library" { 12 } else { 5 }))
         .send_json(json!({"op":op,"data":data}))
         .map_err(host_error)?
         .into_json()
@@ -2577,6 +2764,9 @@ mod tests {
             key: "k".repeat(64),
             media_key: "m".repeat(64),
             quit_requested: std::sync::atomic::AtomicBool::new(false),
+            homes: Mutex::default(),
+            homes_changed: Condvar::new(),
+            opening_home: Mutex::new(()),
         };
         (host, home)
     }
@@ -2742,7 +2932,6 @@ mod tests {
         let (h, home) = test_host();
         assert!(h.action("prepare-recording", json!({})).unwrap_err().contains("Unsupported"));
         assert!(!PUBLIC_OPS.contains(&"prepare-recording"));
-        assert!(!include_str!("library_host.rs").split("#[cfg(test)]").next().unwrap().contains("--prepare-recording"));
         assert_eq!(desktop_args(Path::new("/c")), vec![std::ffi::OsString::from("--desktop"), "--config".into(), "/c".into()], "the host launches the normal desktop entry, never the development toolbar");
         fs::remove_dir_all(home).unwrap();
     }
@@ -3602,7 +3791,6 @@ mod tests {
     #[test]
     fn reported_version_matches_the_package_version() {
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
-        assert_eq!(VERSION, "0.6.0-preview.12");
     }
 
     // ---- identity, the page-only tool, media and the one-press start (controlled fixtures only; nothing is recorded) ----
@@ -3839,10 +4027,6 @@ mod tests {
         host.quit_requested.store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(host.start_recording_with(&envelope("press-2006"), || Ok(json!({}))).is_err());
         assert!(host.human.lock().unwrap().is_empty());
-        // Source check: the mechanism that used to carry a press across the app's start is gone, not merely unused.
-        let source = include_str!("library_host.rs");
-        let marker = ["pending", "_start"].concat();
-        assert_eq!(source.matches(marker.as_str()).count(), 0, "nothing in the host names it any more");
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
@@ -3943,6 +4127,44 @@ mod tests {
         assert_eq!(done["capture"]["fps"], 60);
         assert!(done["capture"].get("secret").is_none() && done["capture"].get("path").is_none(), "only the known figures are kept");
         assert!(done.get("duration").is_some_and(|d| d == &json!(0)), "no duration was reported, none is made up");
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn home_moves_an_open_page_of_the_chosen_target_only_when_it_confirms_and_targets_are_a_fixed_list() {
+        let (host, home) = test_host();
+        let listening = |host: &Host, n: usize| while host.homes.lock().unwrap().listening.len() < n { std::thread::sleep(Duration::from_millis(5)) };
+        std::thread::scope(|scope| {
+            // A Home page Chrome opened listens, shows what it is sent and confirms it.
+            let page = scope.spawn(|| {
+                let sent = host.home_wait(&json!({"page":"chromepage01","via":"chrome"})).unwrap();
+                host.home_done(&json!({"page":"chromepage01","id":sent["id"]})).unwrap();
+                sent
+            });
+            listening(&host, 1);
+            assert!(!host.move_open_home("safari", "/settings"), "a Chrome page is never reused for Safari");
+            assert!(host.move_open_home("chrome", "/settings"));
+            assert_eq!(page.join().unwrap()["navigate"], "settings");
+            // A page that is sent the change but never confirms it does not count as delivered, and is forgotten, so
+            // Home is opened anew instead of the press being lost.
+            let silent = scope.spawn(|| host.home_wait(&json!({"page":"silentpage01","via":"system"})).unwrap());
+            listening(&host, 2);
+            assert!(!host.move_open_home("system", ""));
+            assert_eq!(silent.join().unwrap()["navigate"], "");
+            assert!(!host.homes.lock().unwrap().listening.iter().any(|(p, ..)| p == "silentpage01"));
+        });
+        assert!(host.action("settings", json!({"preferences":{"homeTarget":"codex"}})).is_ok());
+        for bad in [json!("/Applications/Evil.app"), json!("open -a Terminal"), json!(1)] {
+            assert!(host.action("settings", json!({"preferences":{"homeTarget":bad}})).is_err(), "{bad}");
+        }
+        assert!(host.action("open-library", json!({"target":"/bin/sh"})).is_err());
+        assert_eq!(codex_home_link("openrecorder-local", "/settings"), "codex://plugins/openrecorder@openrecorder-local/app/openrecorder_home?path=%2Fsettings");
+        assert!(codex_home_link("openrecorder-local", "").ends_with("?path=%2F"));
+        assert_eq!(enabled_codex_marketplace("[plugins.\"openrecorder@old\"]\nenabled = false\n[plugins.\"openrecorder@current\"]\nenabled = true"), Some("current".into()));
+        assert_eq!(enabled_codex_marketplace("[plugins.\"openrecorder@old\"]\nenabled = false"), None);
+        assert!(!private_opener_error(&format!("No handler for http://localhost/#{}", host.key), &host.key).contains(&host.key));
+        assert_eq!(private_opener_error(&format!("{}{}", "x".repeat(190), host.key), &host.key), format!("{}[private l", "x".repeat(190)));
+        #[cfg(target_os = "macos")]
+        assert!(default_browser().is_some(), "NSWorkspace identifies the default browser even without a stored preference");
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
@@ -4141,15 +4363,6 @@ mod tests {
             assert_eq!(odd["backend"]["pageOps"], false, "a malformed recorder block is not a capability: {bad}");
         }
         assert!(NEW_PAGE_OPS.iter().all(|op| UI_OPS.contains(op)) && NEW_PAGE_OPS.len() == 2);
-        // The source of everything that talks to an owner has no outbound Quit: nothing in ordinary startup, Home, a UI control or an
-        // agent call can send one. (The host's own `quit` handler and the PUBLIC_OPS list are the only places the word appears.)
-        let source = include_str!("library_host.rs");
-        let runtime = &source[..source.find("#[cfg(test)]").unwrap()];
-        let outbound = ["\"quit\"", ", json!"].concat();
-        assert_eq!(runtime.matches(outbound.as_str()).count(), 0, "no code sends a Quit to a running library");
-        for needle in ["fn replace_older_library", "fn handoff_blocker", "fn version_numbers", "fn settle_owner"] {
-            assert!(!runtime.contains(needle), "{needle} no longer exists");
-        }
     }
     #[cfg(unix)]
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -4166,12 +4379,12 @@ mod tests {
         // is the test's race, not the opener's, so it is retried here.
         let opener = |program: &str, target: &str, exit_is_result: bool, wait: Duration| {
             for _ in 0..40 {
-                match run_opener(program, target, exit_is_result, wait) {
+                match run_opener(program, &[target], exit_is_result, wait) {
                     Err(e) if e.contains("Text file busy") => std::thread::sleep(Duration::from_millis(50)),
                     other => return other,
                 }
             }
-            run_opener(program, target, exit_is_result, wait)
+            run_opener(program, &[target], exit_is_result, wait)
         };
         let dir = std::env::temp_dir().join(format!("recorder-opener-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();

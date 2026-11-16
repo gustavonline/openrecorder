@@ -275,8 +275,9 @@ impl Capabilities {
         changed
     }
     /// Fold one finished take's capture.json in. Returns whether anything changed.
-    /// Only a completed take that delivered its rate qualifies *its own workload*; only the recording-speed gate
-    /// failing marks it failed. Cancels, camera failures and every other error say nothing about capacity.
+    /// A completed take qualifies *its own workload* when it delivered its rate and marks it failed when it delivered
+    /// clearly less (a take no longer stops for that: it records at the rate the encoder sustains). Cancels, camera
+    /// failures and every other error say nothing about capacity.
     pub fn record_take(&mut self, capture: &Value, source: &str, camera: Option<&str>, codec: &str, at: u64) -> bool {
         let seen = self.observe(source, camera, capture);
         let Some(workload) = Workload::from_take(capture, source, codec) else { return seen };
@@ -287,7 +288,7 @@ impl Capabilities {
         let measured = capture["cadence"]["outputFps"].as_f64().filter(|n| n.is_finite());
         let status = match capture["status"].as_str() {
             Some("completed") if measured.is_some_and(|m| m >= f64::from(workload.fps) * DELIVERED_SHARE) => Status::Qualified,
-            Some("failed") if capture["error"].as_str().is_some_and(|e| e.starts_with("Recording cannot keep up")) => Status::FailedLast,
+            Some("completed") if measured.is_some() && capture["cadence"]["outputSeconds"].as_f64().is_some_and(|s| s >= 10.) => Status::FailedLast,
             _ => return seen,
         };
         let entry = Entry { status, basis: "take".into(), codec: codec.to_owned(), at, measured_fps: measured };
@@ -353,8 +354,7 @@ impl CheckSink for PipelineSink {
     }
 }
 
-/// The paced loop of the check, over any sink. The same 0.75 s lag limit a recording applies (capture.rs) is
-/// reproduced rather than relaxed. A pass needs the delivered cadence **and** a successful finish: an encoder
+/// The paced capacity check keeps its own strict 0.75 s lag limit; ordinary recordings instead preserve real time. A pass needs the delivered cadence **and** a successful finish: an encoder
 /// that accepts frames and then fails to flush has not shown anything.
 pub fn run_check(sink: &mut dyn CheckSink, w: usize, h: usize, fps: u32, seconds: f64, cancel: &std::sync::atomic::AtomicBool) -> CheckOutcome {
     use std::{sync::atomic::Ordering, time::Instant};
@@ -429,7 +429,7 @@ mod tests {
     const CODEC: &str = "h264_videotoolbox";
     fn take(status: &str, error: Option<&str>, out: Option<f64>, camera: Option<(u64, u64)>, audio: bool, originals: bool, geometry: (u64, u64)) -> Value {
         json!({"status":status,"error":error,"fps":60,"width":geometry.0,"height":geometry.1,"camera":camera.is_some(),
-               "cameraWidth":camera.map(|c| c.0),"cameraHeight":camera.map(|c| c.1),"cadence":{"outputFps":out},
+               "cameraWidth":camera.map(|c| c.0),"cameraHeight":camera.map(|c| c.1),"cadence":{"outputFps":out,"outputSeconds":30.0},
                "workload":{"quality":2560,"audio":audio,"originals":originals,"source":"display:1"}})
     }
     /// The heavy workload of the failed ac1552 take: display, camera 900x720, microphone, originals.
@@ -527,17 +527,21 @@ mod tests {
     }
 
     #[test]
-    fn only_the_speed_gate_marks_a_workload_failed_and_the_latest_measurement_wins() {
+    fn only_a_measured_shortfall_marks_a_workload_failed_and_the_latest_measurement_wins() {
         let mut c = Capabilities::default();
         c.record_take(&good(None, false, false), "display:1", None, CODEC, 1);
-        let gate = "Recording cannot keep up. Choose a lower resolution or frame rate.";
-        assert!(c.record_take(&take("failed", Some(gate), None, None, false, false, (2560, 1440)), "display:1", None, CODEC, 2));
+        let mut short = take("completed", None, Some(55.0), None, false, false, (2560, 1440));
+        short["cadence"]["outputSeconds"] = json!(5.0);
+        assert!(!c.record_take(&short, "display:1", None, CODEC, 2), "a short take must not turn startup time into a capacity failure");
+        assert_eq!(c.status(&light(&c)).status, Status::Qualified);
+        // A take that completed at 40 of 60 fps is a measured shortfall.
+        assert!(c.record_take(&take("completed", None, Some(40.0), None, false, false, (2560, 1440)), "display:1", None, CODEC, 2));
         assert_eq!(c.status(&light(&c)).status, Status::FailedLast);
+        assert_eq!(c.status(&light(&c)).measured_fps, Some(40.0));
         for (status, error) in [("failed", "Camera stopped"), ("failed", "Unexpected native pixel dimensions or stride: 1x1"), ("cancelled", ""), ("failed", "Encoder failed: exit status: 234")] {
             assert!(!c.record_take(&take(status, Some(error), None, None, false, false, (2560, 1440)), "display:1", None, CODEC, 3), "{error}");
         }
-        assert!(!c.record_take(&take("completed", None, Some(40.0), None, false, false, (2560, 1440)), "display:1", None, CODEC, 4));
-        assert_eq!(c.status(&light(&c)).status, Status::FailedLast);
+        assert_eq!(c.status(&light(&c)).status, Status::FailedLast, "failures say nothing about capacity");
         assert!(c.record_take(&good(None, false, false), "display:1", None, CODEC, 5));
         assert_eq!(c.status(&light(&c)).status, Status::Qualified);
         // Takes of other rates, windows, and takes written without a workload record nothing.
@@ -636,20 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn the_check_is_input_free_cleans_up_on_every_path_and_keeps_the_recording_gate_unchanged() {
-        let production = include_str!("capability.rs").split("#[cfg(test)]").next().unwrap();
-        for forbidden in ["scap::", "camera_frame", "AudioHandle", "permissions::", "request_"] {
-            assert!(!production.contains(forbidden), "the capacity check must not touch {forbidden}");
-        }
-        let capture = include_str!("capture.rs").split("#[cfg(test)]").next().unwrap();
-        assert!(capture.contains("- count as f64 / options.fps as f64 > 0.75"));
-        assert!(production.contains("/ f64::from(fps) > 0.75"));
-        assert!(!capture.contains("excluded_startup") && !capture.contains("warmup"));
-        // Every take records the workload that evidence is keyed on.
-        assert!(capture.contains(r#""workload":{"quality":options.quality,"audio":options.microphone.is_some(),"originals":options.originals && camera.is_some(),"#) && capture.contains(r#""source":target_name(options.selection)}"#));
-        // One removal, after the outcome is known, on every path (start refused, finished or failed).
-        assert_eq!(production.matches("remove_dir_all(&dir)").count(), 1);
-        assert!(production.contains("sink.finish()") && production.contains("did not finish cleanly"));
+    fn the_check_refuses_bad_requests_and_leaves_no_scratch_folder() {
         assert_eq!(check_dimensions(2560), Some((2560, 1440)));
         assert_eq!(check_dimensions(1000), None);
         let cancel = AtomicBool::new(false);

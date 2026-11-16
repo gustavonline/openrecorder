@@ -49,9 +49,4 @@ for kind, pixels in icon.ENTRIES:
     assert px(0, 0)[3] == 0 and px(pixels - 1, pixels - 1)[3] == 0, f'{kind}: the corners are transparent'
     # The disc spans 90% of the width (radius 9 of 20 units): the outermost row is mostly empty, 20% in is solid.
     assert px(mid, 0)[3] < 128 and px(mid, int(pixels * 0.2))[3] == 255 and px(int(pixels * 0.2), mid)[3] == 255, f'{kind}: disc size'
-# The build script must ship it and say so in the bundle metadata; the system the app needs comes from the files, not a typed number.
-build = (root / 'scripts/build-native.py').read_text()
-for needle in ('render-app-icon.py', '"CFBundleIconFile":"OpenRecorder"', 'contents/"Resources"', 'LSMinimumSystemVersion":needed', 'LC_BUILD_VERSION'):
-    assert needle in build, needle
-assert '"LSMinimumSystemVersion":"12.3"' not in build
 print('app icon: ok')

@@ -5,8 +5,9 @@
 //!
 //! Ignored by default (needs the helper and takes up to 30 s):
 //!   OPENRECORDER_FFMPEG=/path/to/ffmpeg P9_SECONDS=15 cargo test --release --features desktop-ui -- --ignored --nocapture p9_
-//! It prints one JSON line (and appends it to $P9_OUT when set) with output cadence, source cadence, sampler
-//! lag, per-stage times, the helper's CPU and peak memory, and the codec used.
+//! It prints one JSON line (and appends it to $P9_OUT when set) with output cadence, source cadence, ticks the
+//! sampler skipped, per-stage times, the helper's CPU and peak memory, and the codec used. P9_KEEP=1 keeps the files
+//! (their path is printed) so their timestamps can be inspected.
 use crate::{audio::TestTone, camera_frame::Frame, pipeline::Pipeline};
 use std::{
     sync::{
@@ -95,11 +96,11 @@ pub fn run(label: &str, mut drive: impl FnMut(&mut Pipeline, &Mutex<Arc<Vec<u8>>
     }
     thread::sleep(Duration::from_millis(300)); // sources are live before the sampler starts, as in a real take
 
-    // The fixed-clock sampler, identical in structure to capture::record_session (but it keeps going past the
-    // 0.75 s gate so the whole run is measured; it records when the gate would have tripped).
+    // The fixed-grid sampler, identical in structure to capture::record_session: a tick missed while the encoder was
+    // busy is skipped.
     let epoch = Instant::now();
     let period = Duration::from_secs_f64(1. / f64::from(fps));
-    let (mut count, mut max_lag, mut tripped_at) = (0u32, 0f64, None::<f64>);
+    let (mut count, mut tick) = (0u32, 0u64);
     let (mut drive_total, mut drive_max) = (Duration::ZERO, Duration::ZERO);
     let mut error = None;
     while epoch.elapsed().as_secs_f64() < seconds {
@@ -112,12 +113,8 @@ pub fn run(label: &str, mut drive: impl FnMut(&mut Pipeline, &Mutex<Arc<Vec<u8>>
         drive_total += took;
         drive_max = drive_max.max(took);
         count += 1;
-        let lag = epoch.elapsed().as_secs_f64() - f64::from(count) / f64::from(fps);
-        max_lag = max_lag.max(lag);
-        if lag > 0.75 && tripped_at.is_none() {
-            tripped_at = Some(epoch.elapsed().as_secs_f64());
-        }
-        thread::sleep((epoch + period.mul_f64(f64::from(count))).saturating_duration_since(Instant::now()));
+        tick = crate::capture::next_tick(tick, epoch.elapsed(), period);
+        thread::sleep((epoch + period.mul_f64(tick as f64)).saturating_duration_since(Instant::now()));
     }
     let loop_seconds = epoch.elapsed().as_secs_f64();
     let usage = encoder.child.lock().ok().and_then(|c| helper_usage(c.id()));
@@ -137,7 +134,7 @@ pub fn run(label: &str, mut drive: impl FnMut(&mut Pipeline, &Mutex<Arc<Vec<u8>>
                      "codec": timing["codec"], "sourceFps": source_fps, "cameraFps": camera_fps, "physicalCapture": false},
         "loopSeconds": loop_seconds, "outputFrames": count, "outputFps": f64::from(count) / loop_seconds,
         "sourceFramesPublished": source_frames.load(Ordering::Relaxed),
-        "maxLagSeconds": max_lag, "gateWouldTripAtSeconds": tripped_at,
+        "skippedTicks": tick - u64::from(count),
         "submitMsMean": drive_total.as_secs_f64() * 1e3 / f64::from(count.max(1)), "submitMsMax": drive_max.as_secs_f64() * 1e3,
         "helperCpuSeconds": usage.map(|u| u.0), "helperCpuCores": usage.map(|u| u.0 / loop_seconds), "helperRssMb": usage.map(|u| u.1),
         "finishMs": finish_ms, "finishOk": finished.is_ok(), "error": error,
@@ -150,35 +147,21 @@ pub fn run(label: &str, mut drive: impl FnMut(&mut Pipeline, &Mutex<Arc<Vec<u8>>
             let _ = writeln!(file, "{report}");
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    if std::env::var("P9_KEEP").is_ok_and(|v| v == "1") {
+        println!("P9-BENCH kept {}", dir.display());
+    } else {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     Report(report)
 }
 
 #[test]
 #[ignore = "needs the bundled helper; up to 30 s"]
-fn p9_actual_workload_legacy_sequence() {
-    // The sequence the sampler used before the throughput work: copy the screen into the packed frame under the
-    // slot lock, composite the camera, then one blocking write.
-    run("legacy", |encoder, slot, camera| {
-        {
-            let screen = slot.lock().unwrap();
-            encoder.set_screen(&screen)?;
-        }
-        let frame = camera.lock().unwrap();
-        encoder.set_camera(&frame.bgra)?;
-        drop(frame);
-        encoder.write()
-    });
-}
-
-#[test]
-#[ignore = "needs the bundled helper; up to 30 s"]
 fn p9_actual_workload_pipelined() {
-    // The sequence the sampler uses now: take the handle to the latest picture, hand it (and the camera frame) to
-    // the pipeline, which builds only the camera band and the bubble rows and writes from its own thread.
+    // The recorder's own hand-off: the camera is held only while its band and the bubble are copied, never while
+    // waiting for the encoder.
     run("pipelined", |encoder, slot, camera| {
         let screen = slot.lock().unwrap().clone();
-        let frame = camera.lock().unwrap();
-        encoder.submit(&screen, Some(&frame.bgra))
+        encoder.submit_shared_camera(&screen, camera, |_| Ok(())).map_err(|e| std::io::Error::other(e.to_string()))
     });
 }

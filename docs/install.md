@@ -16,7 +16,7 @@ The same values are in the release notes and in `manifest.json`. Do not run a fi
 
 **Minimum system: macOS 26.0 or later, Apple silicon.** This follows from the files themselves (read-only `otool -l`): the app executable is built for macOS 11.0 or later, but the bundled media helper `Contents/Helpers/ffmpeg` is built for macOS 26.0 or later (both against the macOS 26.5 SDK), and recording needs the helper, so the app and the plugin as shipped need macOS 26.0. Since preview.12 the app's `Info.plist` (`LSMinimumSystemVersion`) says 26.0 as well: the build reads the number from the shipped files instead of typing it. (The earlier preview.11 app still declared 12.3, the minimum of the screen-capture interface the source uses, which was never what that download needed; it stays as it was published.) Earlier systems are not supported and nothing was tested on them. Building the app yourself with a media helper that you build for an older target might run on an older system; that is not verified.
 
-1. Download `OpenRecorder-0.6.0-preview.12-mac-arm64.zip` and verify it.
+1. Download `OpenRecorder-0.6.0-preview.13-mac-arm64.zip` and verify it.
 2. Unzip. The folder holds **OpenRecorder.app** and, beside it, the licence texts and notices (`LICENSE`, `THIRD_PARTY.md`, `licenses/`, `README.txt`, `INSTALL.md`); the signed app itself is unmodified. Move **OpenRecorder.app** to `~/Applications` (the plugin also looks there; one stable location keeps one app).
 3. Open it. There is no Dock icon: look for the disc in the menu bar.
 

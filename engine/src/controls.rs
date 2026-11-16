@@ -55,21 +55,11 @@ fn clock(seconds: u64) -> String {
     }
 }
 
-/// The long edge picked in Settings read as the 16:9 size it produces ("2560 × 1440").
-pub fn size_words(quality: u32) -> String {
-    match quality {
-        1280 => "1280 × 720".into(),
-        2560 => "2560 × 1440".into(),
-        _ => "1920 × 1080".into(),
-    }
-}
 
 /// What a failed take says to a person. The raw backend text only ever goes to `details`.
-pub fn failure_notice(error: &str, fps: u32, quality: u32, seconds: u64, frames: u64, generation: u64) -> Notice {
+pub fn failure_notice(error: &str, seconds: u64, frames: u64, generation: u64) -> Notice {
     let lower = error.to_lowercase();
-    let text = if error.starts_with("Recording cannot keep up") {
-        format!("Couldn't keep up at {fps} fps, {}. Originals are kept.", size_words(quality))
-    } else if error.starts_with("Unexpected native pixel dimensions or stride") {
+    let text = if error.starts_with("Unexpected native pixel dimensions or stride") {
         "The screen image had an unexpected size or layout. Originals are kept.".to_owned()
     } else if frames == 0 {
         "Couldn't start recording. Nothing was recorded.".to_owned()
@@ -590,23 +580,21 @@ mod tests {
     }
     #[test]
     fn failures_read_in_plain_words_with_the_raw_message_only_in_details() {
-        let gate_error = "Recording cannot keep up. Choose a lower resolution or frame rate.";
-        let n = failure_notice(gate_error, 60, 2560, 3, 120, 7);
-        assert_eq!(n.text, "Couldn't keep up at 60 fps, 2560 × 1440. Originals are kept.");
+        let encoder = "The encoder stopped accepting video; what was already written is kept";
+        let n = failure_notice(encoder, 3, 120, 7);
+        assert_eq!(n.text, "Recording stopped. Originals are kept.");
         assert!(n.kept && n.kind == "failed" && n.generation == 7);
-        assert_eq!(n.details.as_deref(), Some(gate_error));
-        assert!(!n.text.contains("Choose a lower"), "raw text stays in details");
-        assert!(!failure_notice("Unexpected failure", 30, 1920, 0, 0, 1).kept, "a take with no frames left nothing to open");
-        assert!(failure_notice(gate_error, 30, 1920, 3, 90, 1).kept);
-        let stride = failure_notice("Unexpected native pixel dimensions or stride: 5120x2880 is outside the supported size", 60, 2560, 0, 1, 1);
+        assert_eq!(n.details.as_deref(), Some(encoder), "raw text stays in details");
+        assert!(!failure_notice("Unexpected failure", 0, 0, 1).kept, "a take with no frames left nothing to open");
+        let stride = failure_notice("Unexpected native pixel dimensions or stride: 5120x2880 is outside the supported size", 0, 1, 1);
         assert_eq!(stride.text, "The screen image had an unexpected size or layout. Originals are kept.");
         assert!(stride.details.unwrap().contains("5120x2880"), "the evidence reaches Details");
-        assert_eq!(failure_notice("Camera stopped sending frames", 30, 1920, 198, 5940, 1).text, "Camera disconnected. Saved up to 3:18.");
-        assert_eq!(failure_notice("anything", 30, 1920, 0, 0, 1).text, "Couldn't start recording. Nothing was recorded.");
-        assert_eq!(failure_notice("disk failed", 30, 1920, 12, 360, 1).text, "Recording stopped. Originals are kept.");
-        let long = failure_notice(&"x".repeat(5000), 30, 1920, 1, 1, 1);
+        assert_eq!(failure_notice("Camera stopped sending frames", 198, 5940, 1).text, "Camera disconnected. Saved up to 3:18.");
+        assert_eq!(failure_notice("anything", 0, 0, 1).text, "Couldn't start recording. Nothing was recorded.");
+        assert_eq!(failure_notice("disk failed", 12, 360, 1).text, "Recording stopped. Originals are kept.");
+        let long = failure_notice(&"x".repeat(5000), 1, 1, 1);
         assert_eq!(long.details.unwrap().len(), 1200);
-        for notice in [n, failure_notice("x", 30, 1920, 5, 150, 1)] {
+        for notice in [n, failure_notice("x", 5, 150, 1)] {
             assert!(!notice.text.contains("Recording Stopped"), "no frozen status line: {}", notice.text);
         }
     }
@@ -670,7 +658,7 @@ mod tests {
     #[test]
     fn the_notice_and_capability_travel_with_the_state_and_clear_with_it() {
         let mut s = snapshot(Stage::Idle);
-        s.notice = Some(failure_notice("Recording cannot keep up. Choose a lower resolution or frame rate.", 60, 2560, 3, 100, 3));
+        s.notice = Some(failure_notice("The encoder stopped accepting video; what was already written is kept", 3, 100, 3));
         s.fps60 = Some(json!({"status":"failed-last","basis":"The last 60 fps recording could not keep up"}));
         let v = progress_json(&s);
         assert_eq!((v["notice"]["kind"].as_str(), v["notice"]["kept"].as_bool()), (Some("failed"), Some(true)));
