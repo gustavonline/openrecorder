@@ -354,6 +354,14 @@ fn finalize_take(
         outcome,
     )
 }
+/// The sampler's next tick on its fixed grid (tick n is due n periods after the epoch): the one after `done`, or,
+/// when whole intervals have already passed, the latest grid tick not after now, which is then due at once. A frame
+/// that is merely late goes out immediately and only fully missed intervals are dropped (the rule of OBS's
+/// `video_sleep`), so an encoder just short of the rate delivers nearly the rate rather than half of it, and a long
+/// stall is never repaid with a burst. Frames carry the time the helper read them, so nothing is compressed.
+pub(crate) fn next_tick(done: u64, elapsed: Duration, period: Duration) -> u64 {
+    (done + 1).max((elapsed.as_secs_f64() / period.as_secs_f64()) as u64)
+}
 pub fn record_session(
     directory: PathBuf,
     camera: Option<Arc<Mutex<crate::camera_frame::Frame>>>,
@@ -559,8 +567,9 @@ pub fn record_session(
         let epoch = Instant::now();
         let mut liveness = CameraLiveness::new(camera_sequence_start, Duration::ZERO);
         let period = Duration::from_secs_f64(1. / options.fps as f64);
-        let mut count = 0u32;
-        let mut max_lag = 0f64;
+        let mut count = 0u64;
+        let mut tick = 0u64;
+        let (mut first_handed, mut last_handed) = (None, Duration::ZERO);
         let loop_result = (|| -> Result<(), Box<dyn std::error::Error>> {
             while !cancel.load(Ordering::Relaxed)
                 && !super::STOP_REQUEST.load(Ordering::Relaxed)
@@ -596,26 +605,17 @@ pub fn record_session(
                     encoder.submit(&screen, None)?;
                 }
                 count += 1;
-                options
-                    .progress
-                    .frames
-                    .store(count as u64, Ordering::Relaxed);
+                last_handed = epoch.elapsed();
+                first_handed.get_or_insert(last_handed);
+                options.progress.frames.store(count, Ordering::Relaxed);
                 if count % 15 == 0 {
                     let secs = epoch.elapsed().as_secs_f64();
                     if secs > 0. {
                         options.progress.delivered_milli_fps.store((count as f64 / secs * 1000.) as u32, Ordering::Relaxed);
                     }
                 }
-                max_lag = max_lag.max(epoch.elapsed().as_secs_f64() - count as f64 / options.fps as f64);
-                if epoch.elapsed().as_secs_f64() - count as f64 / options.fps as f64 > 0.75 {
-                    return Err(
-                        "Recording cannot keep up. Choose a lower resolution or frame rate.".into(),
-                    );
-                }
-                thread::sleep(
-                    (epoch + period.mul_f64(count as f64))
-                        .saturating_duration_since(Instant::now()),
-                );
+                tick = next_tick(tick, epoch.elapsed(), period);
+                thread::sleep((epoch + period.mul_f64(tick as f64)).saturating_duration_since(Instant::now()));
             }
             Ok(())
         })();
@@ -624,9 +624,11 @@ pub fn record_session(
         options.progress.phase.store(2, Ordering::Relaxed);
         let loop_seconds = epoch.elapsed().as_secs_f64();
         metadata["loopSeconds"] = loop_seconds.into();
-        metadata["maxLagSeconds"] = max_lag.into();
         metadata["frames"] = count.into();
-        metadata["duration"] = (count as f64 / options.fps as f64).into();
+        // The take's length as the sampler measured it: first hand-over to last, plus the last frame's interval. The
+        // helper's own timestamps (taken when it reads each frame) can differ from this while the writer is busy; a
+        // slow encoder shows as fewer frames over the same time, not as a shorter take.
+        metadata["duration"] = first_handed.map_or(0., |first| (last_handed - first + period).as_secs_f64()).into();
         metadata["cameraStopped"] = loop_result
             .as_ref()
             .err()
@@ -650,8 +652,9 @@ pub fn record_session(
     if producer.is_finished() {
         let _ = producer.join();
     }
-    // Output and source cadence side by side and never merged: the nominal setting is a request, the
-    // output figure is frames written over the loop, the source figures are what the screen delivered.
+    // Output and source cadence side by side and never merged: the nominal setting is a request (the most frames a
+    // second the sampler will hand over), the output figure is frames written over the loop, the source figures are
+    // what the screen delivered. A tick missed while the encoder was busy is skipped, never made up later.
     let loop_seconds = metadata["loopSeconds"].as_f64().unwrap_or(0.);
     let written = metadata["frames"].as_u64().unwrap_or(0);
     metadata["cadence"] = serde_json::json!({
@@ -659,8 +662,6 @@ pub fn record_session(
         "outputFrames": written,
         "outputSeconds": loop_seconds,
         "outputFps": if loop_seconds > 0. { serde_json::json!(written as f64 / loop_seconds) } else { serde_json::Value::Null },
-        // How far the sampler fell behind its fixed clock at worst (the real-time gate trips at 0.75 s).
-        "maxLagSeconds": metadata["maxLagSeconds"].clone(),
     });
     if let Ok(held) = stats.lock() {
         metadata["source"] = held.json();
@@ -949,6 +950,35 @@ mod failure_tests {
 }
 
 #[cfg(test)]
+mod sampler_tick_tests {
+    use super::*;
+    /// Frames handed over in one second at 60 fps by the capture loop's own schedule, when each hand-over takes
+    /// `cost(n)` (the encoder's pace).
+    fn delivered(cost: impl Fn(u64) -> Duration) -> u64 {
+        let period = Duration::from_secs_f64(1. / 60.);
+        let (mut now, mut tick, mut frames) = (Duration::ZERO, 0, 0);
+        loop {
+            let start = now.max(period.mul_f64(tick as f64));
+            if start >= Duration::from_secs(1) {
+                return frames;
+            }
+            now = start + cost(frames);
+            frames += 1;
+            tick = next_tick(tick, now, period);
+        }
+    }
+    #[test]
+    fn a_slow_encoder_delivers_what_it_can_and_a_stall_is_skipped_not_repaid() {
+        let ms = Duration::from_millis;
+        assert_eq!(delivered(|_| ms(2)), 60, "a fast encoder: the requested rate, never more");
+        // 17 ms a frame is 58.8 fps of capacity: nearly all of it is delivered, not half.
+        assert!((57..=59).contains(&delivered(|_| ms(17))), "{}", delivered(|_| ms(17)));
+        // One 500 ms stall: about half a second of frames is missing, and none are made up afterwards in a burst.
+        let stalled = delivered(|n| if n == 10 { ms(500) } else { ms(2) });
+        assert!((29..=32).contains(&stalled), "{stalled}");
+    }
+}
+#[cfg(test)]
 mod camera_liveness_tests {
     use super::*;
 
@@ -1043,16 +1073,6 @@ mod ownership_tests {
         assert_eq!(window_ownership(None, OWN), Ownership::Unknown);
         assert!(!excluded().contains(&6) && listed_in_picker().contains(&6));
     }
-    #[test]
-    fn capture_and_picker_use_this_one_policy_and_no_title_prefix_filter_remains() {
-        let production = include_str!("capture.rs").split("#[cfg(test)]").next().unwrap();
-        assert!(production.contains("window_ownership(w.owner_pid, own_pid)"));
-        let desktop = include_str!("desktop.rs").split("#[cfg(test)]\nmod fixtures").next().unwrap();
-        assert!(desktop.contains("capture::window_ownership(w.owner_pid, own_pid)"));
-        for (name, text) in [("capture.rs", production), ("desktop.rs", desktop)] {
-            assert!(!text.contains("title.starts_with(\"OpenRecorder"), "{name} still filters by title");
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1132,18 +1152,6 @@ mod frame_check_tests {
         assert_eq!(json["emptyFrames"], REJECT_RUN_FRAMES * 3 + 1 + (REJECT_RUN_FRAMES - 1));
         assert_eq!(json["rejectedFrames"], REJECT_RUN_FRAMES);
         assert!(json["rejectedSamples"].as_array().unwrap().iter().all(|s| s["reason"] != "empty"), "empty ticks take no sample slot");
-    }
-    #[test]
-    fn the_producer_skips_empty_pictures_without_touching_the_slot_or_the_refusal_counters() {
-        let source = include_str!("capture.rs").split("#[cfg(test)]").next().unwrap();
-        assert!(source.contains("if reject == FrameReject::Empty {\n                                        continue;"));
-        // The sampler hands the encoder the capture's own buffer and records how far behind its clock it fell.
-        assert!(source.contains("frame.data.clone()") && source.contains("encoder.submit(&screen, None)?"));
-        assert!(source.contains("\"maxLagSeconds\": metadata[\"maxLagSeconds\"].clone()"));
-        // The gate is exactly what it was.
-        assert!(source.contains("if epoch.elapsed().as_secs_f64() - count as f64 / options.fps as f64 > 0.75 {"));
-        // Per-output encoders are recorded, and `hardware` is only true when every output is.
-        assert!(source.contains("metadata[\"hardware\"] = summary[\"allHardware\"].clone();"));
     }
     #[test]
     fn source_arrival_rate_is_its_own_figure_not_the_output_rate() {

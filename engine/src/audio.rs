@@ -5,7 +5,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant},
@@ -134,7 +134,10 @@ pub struct Session {
     pub dropped: Arc<AtomicU64>,
 }
 impl Session {
-    pub fn new(source: Arc<Shared>) -> io::Result<Self> {
+    /// `origin` is the instant the first video frame was handed over. The encoder connects here only after it has
+    /// started reading video, so the first live sample is placed at its distance from that instant (the writer fills
+    /// the gap with silence); placed at zero, the sound would lead the picture by the encoder's start-up time.
+    pub fn new(source: Arc<Shared>, origin: Arc<OnceLock<Instant>>) -> io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?.to_string();
@@ -168,6 +171,9 @@ impl Session {
                         Err(e) => return Err(e),
                     }
                 };
+                if let Some(origin) = origin.get() {
+                    lease.samples.store((origin.elapsed().as_secs_f64() * f64::from(input.rate)) as u64, Ordering::Relaxed);
+                }
                 *input
                     .forward
                     .lock()

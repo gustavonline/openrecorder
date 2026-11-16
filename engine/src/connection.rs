@@ -34,6 +34,8 @@ impl Connection {
             .timeout_connect(std::time::Duration::from_secs(1))
             .timeout_read(std::time::Duration::from_secs(if op == "native-command" {
                 30
+            } else if op == "open-library" {
+                12
             } else {
                 4
             }))
@@ -210,8 +212,14 @@ impl PendingCompletion {
                 // What the take itself says about how far it got, if it wrote that down. Nothing is invented: a take
                 // without readable details is reported as it always was.
                 if let Ok(meta) = read_metadata(&self.directory) {
-                    data["finalized"] = json!(meta["finalization"]["status"] == "completed");
+                    let finalized = meta["finalization"]["status"] == "completed";
+                    data["finalized"] = json!(finalized);
                     data["capture"] = capture_summary(&meta);
+                    // Files that were closed properly get the length the take measured (its `duration`, from the
+                    // sampler). A take without that proof keeps no duration rather than one its files may not have.
+                    if finalized {
+                        data["duration"] = meta["duration"].clone();
+                    }
                 }
                 ("native-abort", data, Completed::Partial)
             }
@@ -744,6 +752,26 @@ mod tests {
         assert!(host.calls.iter().all(|(op, d)| op == "native-abort" && d["error"] == "Camera disconnected" && d["id"] == id));
         assert!(dir.join("recording.mp4").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn an_interrupted_take_reports_its_duration_only_when_its_files_were_finalized() {
+        // A take stopped early after 128 s whose three files were still finalized (issue #3).
+        let finalized = r#"{"duration":128.0,"frames":7680,"fps":60,"status":"failed","error":"The encoder stopped accepting video; what was already written is kept","finalization":{"status":"completed","error":null}}"#;
+        let unfinished = r#"{"duration":128.0,"frames":7680,"fps":60,"status":"failed","finalization":{"status":"failed","error":"Encoder finalization timed out"}}"#;
+        for (name, metadata, duration) in [("abort-finalized", finalized, Some(128.0)), ("abort-unfinalized", unfinished, None)] {
+            let dir = take_dir(name, Some(metadata));
+            let id = json!("take-5");
+            let mut host = FakeHost::new(0);
+            let error = "The app quit while recording";
+            let mut pending = PendingCompletion::abort(id.clone(), dir.clone(), error.into());
+            assert_eq!(pending.attempt(&mut |op, data| host.call(&id, op, data)), Ok(Completed::Partial), "{name}");
+            let (op, data) = &host.calls[0];
+            assert_eq!(op, "native-abort", "{name}: still an interrupted take");
+            assert_eq!((data["error"].as_str(), data["finalized"].as_bool()), (Some(error), Some(duration.is_some())), "{name}");
+            assert_eq!(data["duration"].as_f64(), duration, "{name}");
+            assert_eq!(data["capture"]["frames"].as_f64(), Some(7680.), "{name}");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
     #[test]
     fn a_lost_reply_is_settled_only_when_the_library_shows_the_take_stored() {

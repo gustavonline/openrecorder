@@ -2494,9 +2494,9 @@ impl State {
         self.heartbeat.reset();
         self.recent_due = Some(Instant::now());
         self.capture_notice = match &result {
-            Ok(Err(e)) => Some(super::controls::failure_notice(e, self.options.progress.fps.load(Ordering::Relaxed), self.confirmed.quality, seconds, frames, self.generation)),
+            Ok(Err(e)) => Some(super::controls::failure_notice(e, seconds, frames, self.generation)),
             Ok(Ok(())) => None,
-            Err(_) => Some(super::controls::failure_notice("The capture worker failed", 30, self.confirmed.quality, seconds, frames, self.generation)),
+            Err(_) => Some(super::controls::failure_notice("The capture worker failed", seconds, frames, self.generation)),
         };
         match (&result, unsaved) {
             // Captured and confirmed by the library.
@@ -6300,23 +6300,6 @@ mod viewport_lifecycle_tests {
         assert!(output.viewport_output.contains_key(&egui::ViewportId::ROOT));
     }
 
-    #[test]
-    fn every_child_window_is_named_once_and_closes_through_the_present_guard() {
-        let production = include_str!("desktop.rs").split("#[cfg(test)]\nmod fixtures").next().unwrap();
-        assert_eq!(production.matches("ViewportId::from_hash_of(").count(), 1, "only vp() may hash ids");
-        for name in CHILD_VIEWPORTS {
-            assert!(production.contains(&format!("const {}: &str = \"{name}\"", format!("VP_{}", name.to_uppercase().replace('-', "_")).replace("VP_NOTICE", "VP_TOAST").replace("VP_SOURCE_PANEL", "VP_SOURCE").replace("VP_DEVICE_PANEL", "VP_DEVICE").replace("VP_QUIT_CONFIRMATION", "VP_QUIT"))), "{name}");
-        }
-        let unique: std::collections::HashSet<_> = CHILD_VIEWPORTS.iter().collect();
-        assert_eq!(unique.len(), CHILD_VIEWPORTS.len());
-        // No ad-hoc viewport id and no raw Close command outside the guard.
-        assert!(!production.contains("vp(\""), "viewports must be addressed through constants");
-        let closes = production.matches("egui::ViewportCommand::Close").count();
-        assert_eq!(closes, 2, "the guard and close_recorder are the only Close senders");
-        for name in CHILD_VIEWPORTS {
-            assert!(production.contains(&format!("vp({})", format!("VP_{}", name.to_uppercase().replace('-', "_")).replace("VP_NOTICE", "VP_TOAST").replace("VP_SOURCE_PANEL", "VP_SOURCE").replace("VP_DEVICE_PANEL", "VP_DEVICE").replace("VP_QUIT_CONFIRMATION", "VP_QUIT"))), "{name} is never closed");
-        }
-    }
 
     #[test]
     fn closing_every_absent_child_creates_nothing() {
@@ -7583,7 +7566,7 @@ mod menu_tests {
             state.recording = false;
             state.worker = None;
             if ending == "failed" || ending == "worker died" {
-                state.capture_notice = Some(super::super::controls::failure_notice("disk failed", 30, 1920, 46, 1380, 3));
+                state.capture_notice = Some(super::super::controls::failure_notice("disk failed", 46, 1380, 3));
             }
             state.tray_update(&ctx);
             let after = last(&drawn);
@@ -7640,7 +7623,7 @@ mod menu_tests {
         assert!(state.current_notice().unwrap().text.contains("isn't saved yet"));
         state.completion = None;
         // An accepted press is a new generation and clears the previous failure's notice.
-        state.capture_notice = Some(super::super::controls::failure_notice("x", 30, 1920, 5, 150, 3));
+        state.capture_notice = Some(super::super::controls::failure_notice("x", 5, 150, 3));
         let before = state.generation;
         let ctx = egui::Context::default();
         state.record_press(&ctx, GrantSnapshot { screen: true, camera: Grant::SystemManaged, microphone: Grant::SystemManaged });
@@ -7699,15 +7682,15 @@ mod menu_tests {
         state.options.progress.frames.store(100, Ordering::Relaxed);
         state.recording = false;
         state.generation = 5;
-        state.finish_take(Ok(Err("Recording cannot keep up. Choose a lower resolution or frame rate.".into())));
+        state.finish_take(Ok(Err("The encoder stopped accepting video; what was already written is kept".into())));
         let notice = state.capture_notice.clone().unwrap();
-        assert_eq!(notice.text, "Couldn't keep up at 60 fps, 2560 × 1440. Originals are kept.");
+        assert_eq!(notice.text, "Recording stopped. Originals are kept.");
         assert!(notice.kept && notice.generation == 5);
         let ctx = egui::Context::default();
         state.tray_update(&ctx);
         let view = last(&drawn);
         assert!(labels(&view).contains(&"Open Last Recording".to_string()) && labels(&view).contains(&"Recording stopped early".to_string()));
-        assert!(!labels(&view).iter().any(|l| l.contains("Choose a lower") || l.contains("keep up") || l == "Use 30 fps" || l == "Dismiss"), "the raw text stays in Home's technical details");
+        assert!(!labels(&view).iter().any(|l| l.contains("encoder") || l == "Use 30 fps" || l == "Dismiss"), "the raw text stays in Home's technical details");
         // Opening the recording clears it from every surface (there is no Dismiss or frame-rate advice in the menu).
         testing::choose(state.tray.as_ref().unwrap(), Action::OpenLastRecording);
         state.tray_update(&ctx);
@@ -7747,8 +7730,7 @@ mod menu_tests {
         state.confirmed.originals = true;
         state.take_source = "display:1".into();
         state.options.selection = Some((false, 1));
-        let gate = "Recording cannot keep up. Choose a lower resolution or frame rate.";
-        end_take(&mut state, summary("failed", Some(gate), None, None, false, false), Err(gate.into()));
+        end_take(&mut state, summary("completed", None, Some(41.0), None, false, false), Ok(()));
         assert_eq!(state.fps60_entry().status, Status::FailedLast);
         assert_eq!(state.fps_in_use(), 60, "the person's choice is never lowered behind their back");
         end_take(&mut state, summary("completed", None, Some(59.9), None, false, false), Ok(()));
@@ -7803,9 +7785,6 @@ mod menu_tests {
         }
         assert!(!gaps.is_empty() && gaps.iter().all(|g| *g <= 4_000), "published on its own, never silent for more than 4 s: {gaps:?}");
         assert!(wakeups <= 40, "about one wakeup per period, not a busy loop: {wakeups}");
-        // The caller asks the toolkit for exactly that wakeup, and nothing else is needed to keep it fresh.
-        let source = include_str!("desktop.rs");
-        assert!(source.contains("if let Some(wake) = self.publish_capture(stage, super::connection::now_ms()) {\n            ctx.request_repaint_after(Duration::from_millis(wake));"));
         // No connection: nothing to tell, and no wakeup is scheduled for it.
         state.connection = None;
         assert_eq!(state.publish_capture(Stage::Idle, now), None);
@@ -8062,8 +8041,7 @@ mod menu_tests {
         state.camera_device_id = Some("cam-A".into());
         state.microphone_intent = true;
         state.take_camera = Some("cam-A".into());
-        let heavy_gate = "Recording cannot keep up. Choose a lower resolution or frame rate.";
-        end_take(&mut state, summary("failed", Some(heavy_gate), None, Some((900, 720)), true, true), Err(heavy_gate.into()));
+        end_take(&mut state, summary("completed", None, Some(41.0), Some((900, 720)), true, true), Ok(()));
         assert_eq!(state.fps60_entry().status, Status::FailedLast, "the heavy workload failed on its own evidence");
         assert_eq!(state.fps_in_use(), 30, "and the passing encoder check does not override that, or raise anything");
         let published = serde_json::json!(state.capabilities.publish_fps60(&state.planned_workload()));

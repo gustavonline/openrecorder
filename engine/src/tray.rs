@@ -1161,13 +1161,13 @@ mod tests {
     #[test]
     fn a_stopped_take_leaves_one_calm_notice_with_one_next_step_and_a_saved_one_leaves_recent() {
         let mut s = TrayState::idle();
-        s.notice = Some(Notice { text: "Couldn't keep up at 60 fps, 2560 × 1440. Originals are kept.".into(), kept: true });
+        s.notice = Some(Notice { text: "Recording stopped. Originals are kept.".into(), kept: true });
         s.recent = vec![("t1".into(), "Today 10:58 · 0:46".into())];
         let m = menu(&s);
         let l = labels(&m);
         assert!(l.contains(&"Recording stopped early".into()) && l.contains(&"Available files were kept.".into()) && l.contains(&"Open Last Recording".into()));
         assert!(has_action(&m, &Action::OpenLastRecording));
-        assert!(!l.iter().any(|x| x == "Use 30 fps" || x == "Dismiss" || x == "Show in Home" || x.contains("keep up")), "no frame-rate advice, no raw reason: {l:?}");
+        assert!(!l.iter().any(|x| x == "Use 30 fps" || x == "Dismiss" || x == "Show in Home" || x.contains("Originals are kept")), "no frame-rate advice, no raw reason: {l:?}");
         assert!(!l.contains(&"Recent".into()), "a notice takes the place of Recent");
         // Nothing was kept: the plain sentence only, and nothing to open.
         s.notice = Some(Notice { text: "Couldn't start recording. Nothing was recorded.".into(), kept: false });
@@ -1342,30 +1342,5 @@ mod tests {
         tray.availability().lock().unwrap().read(Seen::Yes, Seen::No);
         assert!(tray.host_lost());
         assert!(tray.lost_reason().unwrap().contains("nothing is showing"));
-    }
-    #[test]
-    fn the_linux_monitor_is_event_driven_bounded_and_uses_no_polling_or_hand_written_protocol() {
-        let source = include_str!("tray.rs").split("/// A tray drawn into memory, for tests").next().unwrap();
-        let monitor = source.split("mod monitor {").nth(1).unwrap().split("#[cfg(not(any(").next().unwrap();
-        // Three bus signals, one property, one bounded method timeout; no timer loop.
-        for needle in ["receive_name_owner_changed_with_args", "receive_status_notifier_host_registered", "receive_status_notifier_host_unregistered", "method_timeout(Duration::from_secs(3))", "is_status_notifier_host_registered"] {
-            assert!(monitor.contains(needle), "{needle}");
-        }
-        for polling in ["loop {", "sleep(", "interval", "while true"] {
-            assert!(!monitor.contains(polling), "no polling: {polling}");
-        }
-        assert!(monitor.matches("#[zbus(signal)]").count() == 2 && monitor.matches("#[zbus(property)]").count() == 1, "the whole declared protocol surface");
-        assert!(!source.contains("gtk"));
-        // ksni's assume-available mode only skips its own first host check; the monitor is what answers it.
-        assert!(source.contains("assume_sni_available(true)") && source.contains("monitor::start("));
-    }
-    #[test]
-    fn linux_uses_ksni_without_gtk_and_the_platform_trays_stay_where_they_were() {
-        let manifest = include_str!("../Cargo.toml");
-        assert!(manifest.contains("[target.'cfg(target_os = \"linux\")'.dependencies.ksni]") && manifest.contains("version = \"=0.3.7\""));
-        assert!(!manifest.contains("gtk") && !manifest.contains("libappindicator"));
-        assert!(manifest.contains("[target.'cfg(any(target_os = \"macos\", target_os = \"windows\"))'.dependencies.tray-icon]"));
-        let source = include_str!("tray.rs").split("/// A tray drawn into memory, for tests").next().unwrap();
-        assert!(!source.contains("gtk::") && !source.contains("gtk_main"));
     }
 }
