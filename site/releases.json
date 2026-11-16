@@ -1,39 +1,39 @@
 {
   "schema": 1,
   "repository": "gustavonline/openrecorder",
-  "version": "0.6.0-preview.12",
-  "build": 17,
-  "tag": "v0.6.0-preview.12",
+  "version": "0.6.0-preview.13",
+  "build": 18,
+  "tag": "v0.6.0-preview.13",
   "status": "published",
-  "verifiedAt": "2026-11-13T13:25:44Z",
+  "verifiedAt": "2026-11-16T12:38:37Z",
   "platforms": {
     "macos": {
       "architecture": "arm64",
-      "name": "OpenRecorder-0.6.0-preview.12-mac-arm64.zip",
-      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.12/OpenRecorder-0.6.0-preview.12-mac-arm64.zip",
-      "sha256": "ac03d01295e0a24114d7b5d21dfe4e734eb73d474e0aac21a9942d65d518d55d",
-      "bytes": 7646997,
+      "name": "OpenRecorder-0.6.0-preview.13-mac-arm64.zip",
+      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.13/OpenRecorder-0.6.0-preview.13-mac-arm64.zip",
+      "sha256": "c7777283c63f9766fa2c889163b0f9a4ab1531d9ba8aeb4c99fccef915325cde",
+      "bytes": 7657325,
       "status": "Preview, not notarized",
       "minimumOS": "26.0"
     },
     "linux": {
       "architecture": "x64",
-      "name": "OpenRecorder-0.6.0-preview.12-linux-x64.tar.gz",
-      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.12/OpenRecorder-0.6.0-preview.12-linux-x64.tar.gz",
-      "sha256": "154cdd531d503d5bff926164a3e760258dbef65155e82876bb797f00661c134f",
-      "bytes": 8665913,
+      "name": "OpenRecorder-0.6.0-preview.13-linux-x64.tar.gz",
+      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.13/OpenRecorder-0.6.0-preview.13-linux-x64.tar.gz",
+      "sha256": "a479e3986edf431aad6bca1d84df1a4e7fbd3e1f09d65f11c977141f5d88d684",
+      "bytes": 8672742,
       "status": "Experimental build for Linux x64 (needs glibc 2.43 or newer, libdbus, libpipewire and libasound); compiled, never run on a real desktop by its author."
     },
     "windows": {
       "architecture": "x64",
-      "name": "OpenRecorder-0.6.0-preview.12-windows-x64.zip",
-      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.12/OpenRecorder-0.6.0-preview.12-windows-x64.zip",
-      "sha256": "38b42726ff4139b9ff6c9cb4229225dc7868e548d7c58d9936225f81484da2f5",
-      "bytes": 7873306,
+      "name": "OpenRecorder-0.6.0-preview.13-windows-x64.zip",
+      "url": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.13/OpenRecorder-0.6.0-preview.13-windows-x64.zip",
+      "sha256": "7a56b98efc93af93b64c4a1bb3b48503e01d8d38171771563a3d7253cd4fca48",
+      "bytes": 7881504,
       "status": "Experimental build for Windows x64 (cross-built, MinGW runtime included); never run on real Windows hardware."
     }
   },
-  "checksums": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.12/SHA256SUMS",
-  "sources": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.12/openrecorder-media-sources-0.6.0-preview.12.tar.gz",
+  "checksums": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.13/SHA256SUMS",
+  "sources": "https://github.com/gustavonline/openrecorder/releases/download/v0.6.0-preview.13/openrecorder-media-sources-0.6.0-preview.13.tar.gz",
   "notice": "Verified against the release manifest by scripts/update-site-release.py. Builds for other platforms exist only where listed above."
 }
