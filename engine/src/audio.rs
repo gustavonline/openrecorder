@@ -355,9 +355,10 @@ mod backpressure_tests {
     /// An encoder that stops reading the microphone until the loopback buffers are full and the queue has overflowed,
     /// and then reads again. The take must go on, and the stream must stay exactly as long as the samples it was given:
     /// whatever could not be queued meanwhile becomes silence of the same length, and nothing partly written is
-    /// written again. How much the buffers hold differs by system (about 3 s of audio on macOS, about 15 s on a
-    /// Linux loopback with default autotuning), so the source fills them at once and the pause lasts until the writer is seen stuck, rather
-    /// than for a fixed time. Before the fix the accepted socket was non-blocking and the first full buffer failed the take.
+    /// written again. How much the buffers hold differs by system and settings (a Linux VM with default autotuning held
+    /// about 15 s of this audio), so the source fills them at once and the pause lasts until the writer is seen stuck,
+    /// rather than for a fixed time. Before the fix the accepted socket was non-blocking and the first full buffer failed
+    /// the take.
     #[test]
     fn a_paused_encoder_is_waited_for_and_the_stream_keeps_its_length() {
         let source = Arc::new(Shared {
@@ -372,15 +373,19 @@ mod backpressure_tests {
         let mut encoder = TcpStream::connect(&session.address).unwrap();
         let (resume, paused) = mpsc::channel::<()>();
         let reader = thread::spawn(move || {
-            paused.recv().unwrap();
             let mut all = Vec::new();
-            encoder.read_to_end(&mut all).unwrap();
+            // A failed test drops `resume`; the reader then just ends, adding no second panic.
+            if paused.recv().is_ok() {
+                encoder.read_to_end(&mut all).unwrap();
+            }
             all
         });
+        let connecting = Instant::now();
         let target = loop {
             if let Some(target) = source.forward.lock().unwrap().clone() {
                 break target;
             }
+            assert!(connecting.elapsed() < Duration::from_secs(10), "the writer never took the connection: {:?}", session.check());
             thread::sleep(Duration::from_millis(1));
         };
         // Silence the writer places before the first sample (the encoder's start-up after `origin`).
@@ -390,22 +395,22 @@ mod backpressure_tests {
             Chunk { index, bytes: (index..index + 480).flat_map(|i| sample(i).to_le_bytes()).collect() }
         };
         // Hands over chunks without losing any while the writer keeps up. Returns the chunk still waiting once the queue
-        // has stayed full for `stuck`: the writer is then waiting on full buffers (a partial write, then timed-out ones).
+        // has stayed full for `stuck`: the writer is then waiting on full buffers.
         let deliver = |count: usize, stuck: Option<Duration>| {
             let (mut accepted, mut full_since, mut waiting) = (0, None::<Instant>, None);
             let deadline = Instant::now() + Duration::from_secs(30);
             while accepted < count {
+                assert!(Instant::now() < deadline, "the writer took no stream for 30 s: {:?}", session.check());
                 match target.sender.try_send(waiting.take().unwrap_or_else(next)) {
                     Ok(()) => (accepted, full_since) = (accepted + 1, None),
                     Err(mpsc::TrySendError::Full(chunk)) => {
                         if stuck.is_some_and(|limit| full_since.get_or_insert_with(Instant::now).elapsed() >= limit) {
                             return Some(chunk);
                         }
-                        assert!(Instant::now() < deadline, "the writer never filled the loopback buffers");
                         waiting = Some(chunk);
                         thread::sleep(Duration::from_millis(1));
                     }
-                    Err(e) => panic!("the writer went away: {e}"),
+                    Err(e) => panic!("the writer went away ({e}): {:?}", session.check()),
                 }
             }
             None
@@ -415,18 +420,22 @@ mod backpressure_tests {
         // The overflow: like the microphone callback, a chunk that cannot be queued is counted as dropped.
         for chunk in std::iter::once(blocked).chain(std::iter::repeat_with(next).take(9)) {
             let samples = (chunk.bytes.len() / 4) as u64;
-            assert!(target.sender.try_send(chunk).is_err(), "the writer is still stuck");
+            assert!(target.sender.try_send(chunk).is_err(), "the pause really did overflow the queue");
             target.dropped.fetch_add(samples, Ordering::Relaxed);
         }
         assert!(session.check().is_ok(), "a busy encoder is not a failure: {:?}", session.check());
         resume.send(()).unwrap();
         deliver(10, None);
         let total = target.samples.load(Ordering::Relaxed);
-        // Still holding a sender, as a microphone callback may: the writer must stop on `finish`, not on a closed queue.
+        // A sender is still held, as a microphone callback may: the writer must stop on `finish`, not on a closed queue.
+        // It is let go after 3 s, so a writer that ignores the stop fails the bound below instead of hanging the test.
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(3));
+            drop(target);
+        });
         let finishing = Instant::now();
         session.finish().unwrap();
         assert!(finishing.elapsed() < Duration::from_secs(1), "and it stops promptly once it reads again");
-        drop(target);
         let bytes = reader.join().unwrap();
         assert_eq!(bytes.len() as u64, total * 4, "the stream is exactly as long as the samples it was given");
         let mut silent = 0;
@@ -437,7 +446,6 @@ mod backpressure_tests {
             }
         }
         let dropped = session.dropped.load(Ordering::Relaxed);
-        assert_eq!(dropped, 10 * 480, "the pause really did overflow the queue");
         assert_eq!(silent, start + dropped, "only the start-up and the overflow became silence");
     }
 }
