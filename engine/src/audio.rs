@@ -347,33 +347,105 @@ impl Drop for TestTone {
 mod backpressure_tests {
     use super::*;
     use std::io::Read;
-    /// An encoder that stops reading the microphone for longer than the loopback buffers hold (~3 s of audio here)
-    /// and then reads again. The take must go on, and the stream must stay exactly as long as the time it covers:
+    /// Sample `index` of the test stream. Never zero, so silence is told apart from sound, and a sample that is
+    /// repeated or out of place is caught at its position.
+    fn sample(index: u64) -> f32 {
+        (index % 997 + 1) as f32 / 1000.
+    }
+    /// An encoder that stops reading the microphone until the loopback buffers are full and the queue has overflowed,
+    /// and then reads again. The take must go on, and the stream must stay exactly as long as the samples it was given:
     /// whatever could not be queued meanwhile becomes silence of the same length, and nothing partly written is
-    /// written again. Before the fix the accepted socket was non-blocking and the first full buffer failed the take.
+    /// written again. How much the buffers hold differs by system and settings (a Linux VM with default autotuning held
+    /// about 15 s of this audio), so the source fills them at once and the pause lasts until the writer is seen stuck,
+    /// rather than for a fixed time. Before the fix the accepted socket was non-blocking and the first full buffer failed
+    /// the take.
     #[test]
     fn a_paused_encoder_is_waited_for_and_the_stream_keeps_its_length() {
-        let tone = TestTone::new();
+        let source = Arc::new(Shared {
+            rate: 48000,
+            forward: Mutex::new(None),
+            level: AtomicU32::new(0),
+            error: Mutex::new(None),
+        });
         let origin = Arc::new(OnceLock::new());
         origin.set(Instant::now()).unwrap();
-        let mut session = Session::new(tone.shared.clone(), origin.clone()).unwrap();
+        let mut session = Session::new(source.clone(), origin).unwrap();
         let mut encoder = TcpStream::connect(&session.address).unwrap();
+        let (resume, paused) = mpsc::channel::<()>();
         let reader = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(3500));
             let mut all = Vec::new();
-            encoder.read_to_end(&mut all).unwrap();
-            all.len()
+            // A failed test drops `resume`; the reader then just ends, adding no second panic.
+            if paused.recv().is_ok() {
+                encoder.read_to_end(&mut all).unwrap();
+            }
+            all
         });
-        thread::sleep(Duration::from_millis(4500));
+        let connecting = Instant::now();
+        let target = loop {
+            if let Some(target) = source.forward.lock().unwrap().clone() {
+                break target;
+            }
+            assert!(connecting.elapsed() < Duration::from_secs(10), "the writer never took the connection: {:?}", session.check());
+            thread::sleep(Duration::from_millis(1));
+        };
+        // Silence the writer places before the first sample (the encoder's start-up after `origin`).
+        let start = target.samples.load(Ordering::Relaxed);
+        let next = || {
+            let index = target.samples.fetch_add(480, Ordering::Relaxed);
+            Chunk { index, bytes: (index..index + 480).flat_map(|i| sample(i).to_le_bytes()).collect() }
+        };
+        // Hands over chunks without losing any while the writer keeps up. Returns the chunk still waiting once the queue
+        // has stayed full for `stuck`: the writer is then waiting on full buffers.
+        let deliver = |count: usize, stuck: Option<Duration>| {
+            let (mut accepted, mut full_since, mut waiting) = (0, None::<Instant>, None);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while accepted < count {
+                assert!(Instant::now() < deadline, "the writer took no stream for 30 s: {:?}", session.check());
+                match target.sender.try_send(waiting.take().unwrap_or_else(next)) {
+                    Ok(()) => (accepted, full_since) = (accepted + 1, None),
+                    Err(mpsc::TrySendError::Full(chunk)) => {
+                        if stuck.is_some_and(|limit| full_since.get_or_insert_with(Instant::now).elapsed() >= limit) {
+                            return Some(chunk);
+                        }
+                        waiting = Some(chunk);
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => panic!("the writer went away ({e}): {:?}", session.check()),
+                }
+            }
+            None
+        };
+        // Busy for half the time after which an encoder counts as stuck: many socket timeouts, but not a failure.
+        let blocked = deliver(usize::MAX, Some(STUCK_RECORDING / 2)).unwrap();
+        // The overflow: like the microphone callback, a chunk that cannot be queued is counted as dropped.
+        for chunk in std::iter::once(blocked).chain(std::iter::repeat_with(next).take(9)) {
+            let samples = (chunk.bytes.len() / 4) as u64;
+            assert!(target.sender.try_send(chunk).is_err(), "the pause really did overflow the queue");
+            target.dropped.fetch_add(samples, Ordering::Relaxed);
+        }
         assert!(session.check().is_ok(), "a busy encoder is not a failure: {:?}", session.check());
+        resume.send(()).unwrap();
+        deliver(10, None);
+        let total = target.samples.load(Ordering::Relaxed);
+        // A sender is still held, as a microphone callback may: the writer must stop on `finish`, not on a closed queue.
+        // It is let go after 3 s, so a writer that ignores the stop fails the bound below instead of hanging the test.
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(3));
+            drop(target);
+        });
         let finishing = Instant::now();
         session.finish().unwrap();
         assert!(finishing.elapsed() < Duration::from_secs(1), "and it stops promptly once it reads again");
         let bytes = reader.join().unwrap();
-        assert_eq!(bytes % 4, 0, "whole samples only");
-        let covered = origin.get().unwrap().elapsed().as_secs_f64() * 48000.;
-        let samples = (bytes / 4) as f64;
-        assert!(samples > covered - 0.15 * 48000. && samples <= covered, "{samples} samples for {covered:.0} samples of time");
-        assert!(session.dropped.load(Ordering::Relaxed) > 0, "the pause really did overflow the queue");
+        assert_eq!(bytes.len() as u64, total * 4, "the stream is exactly as long as the samples it was given");
+        let mut silent = 0;
+        for (index, value) in bytes.chunks_exact(4).enumerate() {
+            match f32::from_le_bytes(value.try_into().unwrap()) {
+                0. => silent += 1,
+                value => assert_eq!(value, sample(index as u64), "sample {index} is out of place"),
+            }
+        }
+        let dropped = session.dropped.load(Ordering::Relaxed);
+        assert_eq!(silent, start + dropped, "only the start-up and the overflow became silence");
     }
 }
